@@ -77,6 +77,17 @@ Agents in this phase:
 - Preserve full traceability from delivered features back to legacy source evidence.
 - Prefer incremental delivery slices by business capability.
 
+## Custom agent instruction files
+
+The repository now includes ready-to-use custom agent definitions and instruction files in:
+
+- `agents/requirements-discovery.agent.md`
+- `agents/architecture-design.agent.md`
+- `agents/build-delivery.agent.md`
+- `agents/shared-performance.instructions.md`
+
+Each core agent is instructed to delegate specialized work to sub-agents in `agents/subagents/` to keep context small and improve throughput.
+
 ## Suggested backlog order
 
 1. Establish repository folders for `requirements/` and `architecture/` artifacts.
