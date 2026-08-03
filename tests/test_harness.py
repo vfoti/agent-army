@@ -16,7 +16,8 @@ class HarnessTests(unittest.TestCase):
     def test_registry_loads_repository_agents(self):
         harness = AgentHarness(Path(__file__).parents[1], FakeModel())
         self.assertIn("requirements-discovery", harness.registry.agents)
-        self.assertIn("shared-performance", harness.registry.shared_instructions)
+        self.assertIn("Keep context windows small", harness.registry.shared_instructions)
+        self.assertIn("legacy-inventory", harness.registry.subagents)
 
     def test_workspace_cannot_escape(self):
         with tempfile.TemporaryDirectory() as directory:

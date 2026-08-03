@@ -39,6 +39,7 @@ class RunRequest:
     run_id: str = field(default_factory=lambda: uuid.uuid4().hex)
     approval_token: str | None = None
     max_turns: int = 20
+    retry_limit: int = 2
 
 
 @dataclass
@@ -153,6 +154,7 @@ class AgentRegistry:
     def __init__(self, root: Path) -> None:
         self.root = root
         self.agents: dict[str, AgentDefinition] = {}
+        self.subagents: dict[str, str] = {}
         self.skills: dict[str, str] = {}
         self.shared_instructions = ""
         self.reload()
@@ -169,6 +171,8 @@ class AgentRegistry:
                 purpose=purpose.group(1).strip() if purpose else "",
                 instructions=text,
             )
+        for path in (agent_dir / "subagents").glob("*.subagent.md"):
+            self.subagents[path.stem.removesuffix(".subagent")] = path.read_text(encoding="utf-8")
         shared = agent_dir / "shared-performance.instructions.md"
         if shared.exists():
             self.shared_instructions = shared.read_text(encoding="utf-8")
@@ -223,7 +227,21 @@ class AgentHarness:
         try:
             for turn in range(1, request.max_turns + 1):
                 cancel.raise_if_cancelled()
-                response = self.model.complete(messages, ["read", "search", "write", "shell"])
+                response = None
+                for attempt in range(request.retry_limit + 1):
+                    try:
+                        response = self.model.complete(messages, ["read", "search", "write", "shell"])
+                        break
+                    except Exception as error:
+                        self.store.append("model-retry", request.run_id, turn=turn, attempt=attempt + 1, error=str(error))
+                        if attempt == request.retry_limit:
+                            raise
+                # Retain the system contract and recent turns when a long task
+                # would otherwise grow without bound.
+                if len(messages) > 12:
+                    messages = [messages[0], *messages[-10:]]
+                    self.store.append("context-compacted", request.run_id, turn=turn)
+                assert response is not None
                 last_content = str(response.get("content", ""))
                 self.store.append("model-response", request.run_id, turn=turn, response=response)
                 messages.append({"role": "assistant", "content": last_content})
