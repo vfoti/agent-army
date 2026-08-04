@@ -44,6 +44,10 @@ python3 -m unittest tests.test_harness
 
 See [docs/runtime-evaluation.md](docs/runtime-evaluation.md). Summary: e2b and GitHub provide *sandboxes*, LangChain provides *orchestration*. The recommended hybrid is **LangGraph/deepagents as the harness**, **e2b as the execution sandbox** for the code/test roles, with a **GitHub-native mode** (Copilot coding agent) as a lightweight deployment target reusing the same role prompts. The sandbox layer (`harness/sandbox.py`) is pluggable: `LocalExecutor` works today; `E2BExecutor` and `GitHubRunnerExecutor` are integration stubs.
 
+## Deployment
+
+See [docs/deployment.md](docs/deployment.md) for the always-on Docker Compose deployment, GitHub-issue intake workflow (`agent-task` label, `/approve <role>` comments), budget guards, and the hello-world pilot.
+
 ## Harness design
 
 See [docs/harness.md](docs/harness.md) for the full design: intake layer, orchestrator with governance gates, role runners (pluggable `invoke` backend for LangChain deepagents, Copilot, or direct model APIs), sandbox layer, task ledger, and the traceability index.
