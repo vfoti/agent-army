@@ -1,0 +1,34 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/vfoti/agent-army/harness/schemas/result.schema.json",
+  "title": "Result",
+  "description": "Result envelope emitted by each role back to the task source, and used as input to the next role.",
+  "type": "object",
+  "required": ["task_id", "role", "status"],
+  "properties": {
+    "task_id": { "type": "string" },
+    "role": { "enum": ["analysis", "design", "code", "test"] },
+    "status": {
+      "enum": ["succeeded", "failed", "blocked", "awaiting_approval"],
+      "description": "Outcome of the role run. 'awaiting_approval' pauses the pipeline at a governance gate."
+    },
+    "artifacts": {
+      "type": "array",
+      "description": "Artifacts produced (file paths, PR links, evidence).",
+      "items": {
+        "type": "object",
+        "required": ["type", "reference"],
+        "properties": {
+          "type": { "enum": ["file", "pull_request", "evidence", "report"] },
+          "reference": { "type": "string" },
+          "description": { "type": "string" }
+        }
+      }
+    },
+    "open_questions": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "summary": { "type": "string" }
+  }
+}

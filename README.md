@@ -1,98 +1,68 @@
 # agent-army
 
-A starter blueprint for a custom agent suite that modernizes legacy COBOL, SQL, and Java systems into:
+An **analysis / design / code / test agent army** that takes instructions as input from external sources (GitHub issues, webhooks, queues, or a local task folder) and drives them through a governed pipeline with human approval gates.
 
-- a consolidated **Angular** frontend application
-- a **Spring** middleware layer
+The repository contains:
 
-## Modernization workflow
+- **`agents/`** — structured agent definitions (YAML frontmatter + role prompt) for the four roles, loadable by the harness or deployable directly as Copilot custom agents.
+- **`harness/`** — a dependency-free Python harness: instruction intake, orchestrator with governance gates, role runners, pluggable sandbox layer, and a per-task ledger.
+- **`tasks/`** — task envelopes (intake contract) and runtime state.
+- **`docs/`** — harness design and the e2b.dev vs LangChain vs GitHub sandbox runtime evaluation.
+- **`tests/`** — harness test suite.
 
-The suite is intentionally split into separate sessions so each phase can be reviewed and approved before moving forward.
+## The four roles
 
-### Session 1: Source scanning and requirements discovery
+1. **Analysis Agent** — ingests instructions + source material; produces requirements, inventories, behavior extraction, and traceability.
+2. **Design Agent** — turns approved analysis into architecture, data models, API contracts, and migration/implementation plans.
+3. **Code Agent** — implements design artifacts as code changes on a branch and opens PRs.
+4. **Test Agent** — generates tests from requirements/contracts, runs suites, verifies traceability, and gates promotion between phases.
 
-**Goal:** turn legacy code into traceable requirements.
+Each role delegates to narrow sub-agents (`agents/<role>/subagents/`) to keep context small, and applies `agents/shared-performance.instructions.md`.
 
-Agents in this phase:
+## Instructions as input from another source
 
-1. **Legacy Inventory Agent**
-   - Scans COBOL copybooks/programs, SQL scripts/procedures, and Java services.
-   - Produces an inventory of domains, modules, interfaces, jobs, and dependencies.
-2. **Behavior Extraction Agent**
-   - Documents business rules, validations, calculations, and decision paths.
-3. **Requirements Authoring Agent**
-   - Converts findings into functional + non-functional requirements.
-   - Adds traceability links back to source file and line references.
+Tasks arrive as JSON envelopes conforming to `harness/schemas/task.schema.json` (task id, requesting system, target repo/refs, requested roles, goal, constraints, acceptance criteria, callback). Each role emits a result envelope (`harness/schemas/result.schema.json`) back to the source; the next role consumes it, enabling chained handoffs. Adapters in `harness/intake.py` support a local `tasks/inbox` folder (functional) plus GitHub-issue and webhook sources (stubs).
 
-**Primary outputs:**
+## Quick start
 
-- `requirements/system-overview.md`
-- `requirements/domain-requirements.md`
-- `requirements/non-functional-requirements.md`
-- `requirements/traceability-matrix.md`
+```bash
+# list loaded role definitions
+python3 -m harness agents
 
-### Session 2: Architecture and solution design
+# run a task (dry-run role runners); it pauses at the analysis approval gate
+python3 -m harness run tasks/examples/modernize-billing-001.json
 
-**Goal:** define an implementation-ready architecture based on approved requirements.
+# approve the gate and resume
+python3 -m harness approve modernize-billing-001 analysis <your-name>
+python3 -m harness run tasks/examples/modernize-billing-001.json
 
-Agents in this phase:
+# run the tests
+python3 -m unittest tests.test_harness
+```
 
-1. **Target Architecture Agent**
-   - Defines bounded contexts, service decomposition, and integration strategy.
-2. **Data & API Design Agent**
-   - Creates canonical data model and API contracts between Angular and Spring.
-3. **Migration Planning Agent**
-   - Plans incremental cutover and coexistence with legacy systems.
+## Runtime: e2b.dev vs LangChain vs GitHub sandboxes
 
-**Primary outputs:**
+See [docs/runtime-evaluation.md](docs/runtime-evaluation.md). Summary: e2b and GitHub provide *sandboxes*, LangChain provides *orchestration*. The recommended hybrid is **LangGraph/deepagents as the harness**, **e2b as the execution sandbox** for the code/test roles, with a **GitHub-native mode** (Copilot coding agent) as a lightweight deployment target reusing the same role prompts. The sandbox layer (`harness/sandbox.py`) is pluggable: `LocalExecutor` works today; `E2BExecutor` and `GitHubRunnerExecutor` are integration stubs.
 
-- `architecture/solution-architecture.md`
-- `architecture/api-specification.md`
-- `architecture/data-model.md`
-- `architecture/migration-plan.md`
+## Harness design
 
-### Session 3: Build and delivery
-
-**Goal:** implement approved architecture by parallel delivery teams/agents.
-
-Agents in this phase:
-
-1. **Angular Build Agents**
-   - Implement UI modules, routing, state handling, forms, and validation.
-2. **Spring Build Agents**
-   - Implement domain services, orchestration, APIs, and persistence.
-3. **Integration & Quality Agent**
-   - Verifies cross-layer behavior, test coverage, and release readiness.
-
-**Primary outputs:**
-
-- frontend and middleware implementation artifacts
-- automated tests and integration validation evidence
-- release notes per increment
+See [docs/harness.md](docs/harness.md) for the full design: intake layer, orchestrator with governance gates, role runners (pluggable `invoke` backend for LangChain deepagents, Copilot, or direct model APIs), sandbox layer, task ledger, and the traceability index.
 
 ## Governance rules
 
-- Do not begin Session 2 until Session 1 deliverables are reviewed and approved.
-- Do not begin Session 3 until Session 2 architecture artifacts are reviewed and approved.
-- Preserve full traceability from delivered features back to legacy source evidence.
+- The pipeline pauses after **analysis**, **design**, and **test** for human approval (`python3 -m harness approve ...`) before the next role starts.
+- Preserve full traceability from delivered features back to source evidence: the ledger records task → requirement → design → PR → test evidence.
 - Prefer incremental delivery slices by business capability.
 
-## Custom agent instruction files
+## Mission profile: legacy modernization
 
-The repository now includes ready-to-use custom agent definitions and instruction files in:
+The original mission for this army is modernizing legacy COBOL, SQL, and Java systems into a consolidated **Angular** frontend and **Spring** middleware. Mapped to the roles:
 
-- `agents/requirements-discovery.agent.md`
-- `agents/architecture-design.agent.md`
-- `agents/build-delivery.agent.md`
-- `agents/shared-performance.instructions.md`
+| Phase | Role | Primary outputs |
+| --- | --- | --- |
+| Source scanning & requirements | analysis | `requirements/system-overview.md`, `requirements/domain-requirements.md`, `requirements/non-functional-requirements.md`, `requirements/traceability-matrix.md` |
+| Architecture & solution design | design | `architecture/solution-architecture.md`, `architecture/api-specification.md`, `architecture/data-model.md`, `architecture/migration-plan.md` |
+| Build & delivery | code | Angular feature increments, Spring service increments, PRs per slice |
+| Verification & promotion | test | test suites, execution evidence, traceability verification report |
 
-Each core agent is instructed to delegate specialized work to sub-agents in `agents/subagents/` to keep context small and improve throughput.
-
-## Suggested backlog order
-
-1. Establish repository folders for `requirements/` and `architecture/` artifacts.
-2. Run Session 1 agents on a small pilot legacy domain.
-3. Review and baseline requirements documents.
-4. Run Session 2 architecture agents.
-5. Approve architecture baseline.
-6. Start Session 3 build agents by feature slice.
+An example task envelope for this mission is provided at `tasks/examples/modernize-billing-001.json`.

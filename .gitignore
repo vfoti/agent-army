@@ -1,0 +1,7 @@
+# Runtime state produced by the harness (per-machine, not shared)
+tasks/inbox/
+tasks/outbox/
+tasks/ledger/
+
+__pycache__/
+*.pyc
