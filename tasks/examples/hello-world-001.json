@@ -1,0 +1,23 @@
+{
+  "task_id": "hello-world-001",
+  "source": {
+    "system": "folder",
+    "reference": "tasks/examples/hello-world-001.json"
+  },
+  "roles": ["analysis", "design", "code", "test"],
+  "goal": "Hello world pilot: produce a single-file Python CLI that prints 'Hello, agent army!' with one unit test, exercising all four roles end to end.",
+  "constraints": [
+    "Keep every artifact under a hello/ directory",
+    "Standard library only"
+  ],
+  "acceptance_criteria": [
+    "Analysis lists at least one requirement with an ID",
+    "Design specifies the CLI interface",
+    "Code produces hello/hello.py",
+    "Test produces and passes hello/test_hello.py"
+  ],
+  "callback": {
+    "type": "folder",
+    "destination": "tasks/outbox"
+  }
+}

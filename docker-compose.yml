@@ -1,0 +1,19 @@
+services:
+  agent-army:
+    build: .
+    restart: unless-stopped
+    environment:
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+      GITHUB_TOKEN: ${GITHUB_TOKEN}
+      AGENT_ARMY_REPO: ${AGENT_ARMY_REPO}
+      AGENT_ARMY_INTAKE_LABEL: ${AGENT_ARMY_INTAKE_LABEL:-agent-task}
+      AGENT_ARMY_MODEL: ${AGENT_ARMY_MODEL:-claude-sonnet-4-5}
+      AGENT_ARMY_BUDGET_USD_PER_TASK: ${AGENT_ARMY_BUDGET_USD_PER_TASK:-5.0}
+      AGENT_ARMY_BUDGET_USD_PER_ROLE: ${AGENT_ARMY_BUDGET_USD_PER_ROLE:-2.0}
+      AGENT_ARMY_BUDGET_TOKENS_PER_TASK: ${AGENT_ARMY_BUDGET_TOKENS_PER_TASK:-500000}
+      AGENT_ARMY_POLL_INTERVAL: ${AGENT_ARMY_POLL_INTERVAL:-60}
+    volumes:
+      # D6: file-based ledger persisted on the host
+      - ./tasks:/app/tasks
+      # D2: allow the service to launch sandbox containers on the host daemon
+      - /var/run/docker.sock:/var/run/docker.sock

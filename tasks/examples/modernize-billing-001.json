@@ -1,0 +1,26 @@
+{
+  "task_id": "modernize-billing-001",
+  "source": {
+    "system": "github-issue",
+    "reference": "https://github.com/vfoti/agent-army/issues/1"
+  },
+  "target": {
+    "repo": "vfoti/legacy-billing",
+    "ref": "main"
+  },
+  "roles": ["analysis", "design", "code", "test"],
+  "goal": "Modernize the billing domain from COBOL/SQL to Angular + Spring.",
+  "constraints": [
+    "Preserve existing batch job schedules during coexistence",
+    "No changes to the legacy database schema in this increment"
+  ],
+  "acceptance_criteria": [
+    "All billing business rules traced to requirement IDs",
+    "API contracts approved before implementation",
+    "Test evidence links every delivered feature to a requirement"
+  ],
+  "callback": {
+    "type": "folder",
+    "destination": "tasks/outbox"
+  }
+}
