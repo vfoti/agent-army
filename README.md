@@ -5,10 +5,11 @@ An **analysis / design / code / test agent army** that takes instructions as inp
 The repository contains:
 
 - **`agents/`** — structured agent definitions (YAML frontmatter + role prompt) for the four roles, loadable by the harness or deployable directly as Copilot custom agents.
-- **`harness/`** — a dependency-free Python harness: instruction intake, orchestrator with governance gates, role runners, pluggable sandbox layer, and a per-task ledger.
+- **`harness/`** — a stdlib-only Python harness: instruction intake, orchestrator with governance gates, role runners, pluggable sandbox layer, env-var configuration (`config.py`), token/cost ceilings (`budget.py`), an always-on service loop (`service.py`), and a per-task ledger. The only optional third-party dependency is the `anthropic` SDK, used solely by `harness/anthropic_runner.py`.
 - **`tasks/`** — task envelopes (intake contract) and runtime state.
-- **`docs/`** — harness design and the e2b.dev vs LangChain vs GitHub sandbox runtime evaluation.
-- **`tests/`** — harness test suite.
+- **`docs/`** — harness design, deployment, and the e2b.dev vs LangChain vs GitHub sandbox runtime evaluation.
+- **`tests/`** — harness test suite (`tests/test_harness.py`, `tests/test_phase2.py`).
+- **`Dockerfile` / `docker-compose.yml`** — the always-on containerized deployment of the harness service.
 
 ## The four roles
 
@@ -21,7 +22,7 @@ Each role delegates to narrow sub-agents (`agents/<role>/subagents/`) to keep co
 
 ## Instructions as input from another source
 
-Tasks arrive as JSON envelopes conforming to `harness/schemas/task.schema.json` (task id, requesting system, target repo/refs, requested roles, goal, constraints, acceptance criteria, callback). Each role emits a result envelope (`harness/schemas/result.schema.json`) back to the source; the next role consumes it, enabling chained handoffs. Adapters in `harness/intake.py` support a local `tasks/inbox` folder (functional) plus GitHub-issue and webhook sources (stubs).
+Tasks arrive as JSON envelopes conforming to `harness/schemas/task.schema.json` (task id, requesting system, target repo/refs, requested roles, goal, constraints, acceptance criteria, callback). Each role emits a result envelope (`harness/schemas/result.schema.json`) back to the source; the next role consumes it, enabling chained handoffs. Adapters in `harness/intake.py` support a local `tasks/inbox` folder (`FolderIntake`) and GitHub issues (`GitHubIssueIntake` — polls the `agent-task` label, reads an optional fenced JSON envelope from the issue body, parses `/approve <role>` comments, and posts results back as comments). `WebhookIntake` remains an integration stub.
 
 ## Quick start
 
@@ -37,12 +38,17 @@ python3 -m harness approve modernize-billing-001 analysis <your-name>
 python3 -m harness run tasks/examples/modernize-billing-001.json
 
 # run the tests
-python3 -m unittest tests.test_harness
+python3 -m unittest tests.test_harness tests.test_phase2
+
+# run the always-on service loop (folder intake, offline, single cycle)
+python3 -m harness.service --folder --dry-run --once
 ```
+
+The Phase 2 pilot envelope is `tasks/examples/hello-world-001.json`.
 
 ## Runtime: e2b.dev vs LangChain vs GitHub sandboxes
 
-See [docs/runtime-evaluation.md](docs/runtime-evaluation.md). Summary: e2b and GitHub provide *sandboxes*, LangChain provides *orchestration*. The recommended hybrid is **LangGraph/deepagents as the harness**, **e2b as the execution sandbox** for the code/test roles, with a **GitHub-native mode** (Copilot coding agent) as a lightweight deployment target reusing the same role prompts. The sandbox layer (`harness/sandbox.py`) is pluggable: `LocalExecutor` works today; `E2BExecutor` and `GitHubRunnerExecutor` are integration stubs.
+See [docs/runtime-evaluation.md](docs/runtime-evaluation.md). Summary: e2b and GitHub provide *sandboxes*, LangChain provides *orchestration*. The recommended hybrid is **LangGraph/deepagents as the harness**, **e2b as the execution sandbox** for the code/test roles, with a **GitHub-native mode** (Copilot coding agent) as a lightweight deployment target reusing the same role prompts. The sandbox layer (`harness/sandbox.py`) is pluggable: `LocalExecutor` and `DockerExecutor` (the deployed choice — an ephemeral container per command) work today; `E2BExecutor` and `GitHubRunnerExecutor` are integration stubs.
 
 ## Deployment
 
