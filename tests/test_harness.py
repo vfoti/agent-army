@@ -45,6 +45,10 @@ class TestAgentLoader(unittest.TestCase):
         self.assertEqual(analysis.handoff["next_role"], "design")
         self.assertEqual(len(analysis.subagents), 2)
         self.assertIsNone(agents["test"].handoff["next_role"])
+        self.assertIn("database_query", analysis.tools)
+        self.assertNotIn("database_migrate", analysis.tools)
+        self.assertIn("database_migrate", agents["code"].tools)
+        self.assertIn("database_migrate", agents["test"].tools)
 
     def test_system_prompt_includes_shared_instructions(self):
         agents = load_all_agents(AGENTS_DIR)

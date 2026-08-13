@@ -20,6 +20,11 @@ The repository contains:
 
 Each role delegates to narrow sub-agents (`agents/<role>/subagents/`) to keep context small, and applies `agents/shared-performance.instructions.md`.
 
+For DB2 on z/OS to PostgreSQL work, role-scoped tools support read-only
+queries, schema extraction, and transactional PostgreSQL SQL migrations.
+Connection setup and client requirements are documented in
+[docs/deployment.md](docs/deployment.md#db2-to-postgresql-database-tools).
+
 ## Instructions as input from another source
 
 Tasks arrive as JSON envelopes conforming to `harness/schemas/task.schema.json` (task id, requesting system, target repo/refs, requested roles, goal, constraints, acceptance criteria, callback). Each role emits a result envelope (`harness/schemas/result.schema.json`) back to the source; the next role consumes it, enabling chained handoffs. Adapters in `harness/intake.py` support a local `tasks/inbox` folder (`FolderIntake`) and GitHub issues (`GitHubIssueIntake` — polls the `agent-task` label, reads an optional fenced JSON envelope from the issue body, parses `/approve <role>` comments, and posts results back as comments). `WebhookIntake` remains an integration stub.

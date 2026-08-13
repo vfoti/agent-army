@@ -99,6 +99,37 @@ Troubleshooting:
 - Retained or failed sandboxes: inspect with `sbx ls` and remove with
   `sbx rm --force <name>`.
 
+## DB2 to PostgreSQL database tools
+
+The analysis and design roles can inspect both databases with
+`database_query` and `database_schema`. The code and test roles can also apply
+reviewed `.sql` files to PostgreSQL with `database_migrate`. Query calls accept
+one read-only statement, and PostgreSQL queries run inside a read-only
+transaction. Migrations are workspace-confined and run in one transaction with
+`ON_ERROR_STOP`.
+
+Install `db2`/`db2look` and `psql`/`pg_dump` in the selected execution
+environment. For the Docker backend, use a custom `AGENT_ARMY_SANDBOX_IMAGE`
+containing both client toolchains and enable only the network path required to
+reach the databases. DB2 client licensing and installation remain the
+operator's responsibility.
+
+Configure connections using CLI-native profiles:
+
+```bash
+AGENT_ARMY_DB2_DATABASE=LEGACYZ
+AGENT_ARMY_POSTGRES_SERVICE=migration-target
+```
+
+`AGENT_ARMY_DB2_DATABASE` is a cataloged DB2 alias.
+`AGENT_ARMY_POSTGRES_SERVICE` names a PostgreSQL service from
+`pg_service.conf`. Configure DB2 authentication and PostgreSQL `.pgpass`
+outside the repository. Use read-only DB2 credentials for inspection, and
+point code/test at a dedicated migration target—not production. Never place
+passwords in task envelopes, tool arguments, migration files, or committed
+configuration. With Docker Sandboxes, provision credentials through
+`sbx secret`.
+
 ## Workflow
 
 1. Open a GitHub issue, label it `agent-task`. Optionally include a

@@ -422,6 +422,88 @@ class TestSandboxToolExecution(unittest.TestCase):
             executor.run.assert_called_once_with(
                 ["echo", "ok"], cwd=None, timeout=10)
 
+    def test_database_query_is_read_only_and_uses_postgres_service(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config = Config()
+            config.postgres_service = "migration-target"
+            agents = load_all_agents(AGENTS_DIR)
+            executor = mock.Mock()
+            executor.run.return_value = mock.Mock(
+                exit_code=0, stdout="count\n2\n", stderr="")
+            runner = AnthropicRoleRunner(
+                agents["analysis"], AGENTS_DIR, config,
+                BudgetGuard(config, TaskLedger(Path(tmp) / "ledger")),
+                Path(tmp), lambda task: executor,
+            )
+
+            output = runner._execute_tool(
+                hello_task(), "database_query",
+                {"database": "postgres", "sql": "SELECT count(*) FROM accounts"},
+            )
+
+            self.assertIn("count", output)
+            command = executor.run.call_args.args[0]
+            self.assertEqual(command[:2], ["psql", "service=migration-target"])
+            self.assertIn("BEGIN READ ONLY;", command[-1])
+            with self.assertRaisesRegex(ValueError, "read-only"):
+                runner._execute_tool(
+                    hello_task(), "database_query",
+                    {"database": "postgres", "sql": "DROP TABLE accounts"},
+                )
+
+    def test_db2_schema_uses_configured_catalog_alias(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config = Config()
+            config.db2_database = "LEGACY"
+            agents = load_all_agents(AGENTS_DIR)
+            executor = mock.Mock()
+            executor.run.return_value = mock.Mock(
+                exit_code=0, stdout="ddl", stderr="")
+            runner = AnthropicRoleRunner(
+                agents["design"], AGENTS_DIR, config,
+                BudgetGuard(config, TaskLedger(Path(tmp) / "ledger")),
+                Path(tmp), lambda task: executor,
+            )
+
+            runner._execute_tool(
+                hello_task(), "database_schema", {"database": "db2"})
+
+            executor.run.assert_called_once_with(
+                ["db2look", "-d", "LEGACY", "-e", "-x"],
+                cwd=None, timeout=config.sandbox_timeout,
+            )
+
+    def test_database_migrate_confines_sql_file_to_workspace(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp)
+            migration = workspace / "migrations" / "001_accounts.sql"
+            migration.parent.mkdir()
+            migration.write_text("CREATE TABLE accounts (id bigint);", encoding="utf-8")
+            config = Config()
+            config.postgres_service = "migration-target"
+            agents = load_all_agents(AGENTS_DIR)
+            executor = mock.Mock()
+            executor.run.return_value = mock.Mock(
+                exit_code=0, stdout="CREATE TABLE", stderr="")
+            runner = AnthropicRoleRunner(
+                agents["code"], AGENTS_DIR, config,
+                BudgetGuard(config, TaskLedger(workspace / "ledger")),
+                workspace, lambda task: executor,
+            )
+
+            runner._execute_tool(
+                hello_task(), "database_migrate",
+                {"path": "migrations/001_accounts.sql"},
+            )
+
+            command = executor.run.call_args.args[0]
+            self.assertEqual(command[:2], ["psql", "service=migration-target"])
+            self.assertIn("--single-transaction", command)
+            self.assertEqual(command[-1], "migrations/001_accounts.sql")
+            with self.assertRaisesRegex(ValueError, "escapes"):
+                runner._execute_tool(
+                    hello_task(), "database_migrate", {"path": "../outside.sql"})
+
 
 class TestServiceLoop(unittest.TestCase):
     def test_dry_run_cycle_over_folder_intake(self):
