@@ -48,7 +48,7 @@ The Phase 2 pilot envelope is `tasks/examples/hello-world-001.json`.
 
 ## Runtime: e2b.dev vs LangChain vs GitHub sandboxes
 
-See [docs/runtime-evaluation.md](docs/runtime-evaluation.md). Summary: e2b and GitHub provide *sandboxes*, LangChain provides *orchestration*. The recommended hybrid is **LangGraph/deepagents as the harness**, **e2b as the execution sandbox** for the code/test roles, with a **GitHub-native mode** (Copilot coding agent) as a lightweight deployment target reusing the same role prompts. The sandbox layer (`harness/sandbox.py`) is pluggable: `LocalExecutor` and `DockerExecutor` (the deployed choice — an ephemeral container per command) work today; `E2BExecutor` and `GitHubRunnerExecutor` are integration stubs.
+See [docs/runtime-evaluation.md](docs/runtime-evaluation.md). The sandbox layer is pluggable: local execution, ephemeral Docker containers, and persistent task-scoped Docker Sandbox microVMs work today; e2b and GitHub runners remain integration stubs. Docker Sandboxes are the recommended VM-isolated local backend.
 
 ## Deployment
 

@@ -20,6 +20,11 @@ def _env_int(name: str, default: int) -> int:
     return int(raw) if raw else default
 
 
+def _env_bool(name: str, default: bool) -> bool:
+    raw = os.environ.get(name)
+    return raw.lower() in {"1", "true", "yes", "on"} if raw else default
+
+
 @dataclass
 class Config:
     # D1: Anthropic backend
@@ -51,11 +56,23 @@ class Config:
     price_per_mtok_output: float = field(
         default_factory=lambda: _env_float("AGENT_ARMY_PRICE_OUTPUT_PER_MTOK", 15.0))
 
-    # D2: local Docker sandbox
+    # Sandboxed command execution. Docker Sandboxes is opt-in.
+    sandbox_backend: str = field(
+        default_factory=lambda: os.environ.get("AGENT_ARMY_SANDBOX_BACKEND", "local"))
     sandbox_image: str = field(
         default_factory=lambda: os.environ.get("AGENT_ARMY_SANDBOX_IMAGE", "python:3.12-slim"))
     sandbox_timeout: int = field(
         default_factory=lambda: _env_int("AGENT_ARMY_SANDBOX_TIMEOUT", 600))
+    sandbox_template: str = field(
+        default_factory=lambda: os.environ.get("AGENT_ARMY_SANDBOX_TEMPLATE", "shell"))
+    sandbox_clone: bool = field(
+        default_factory=lambda: _env_bool("AGENT_ARMY_SANDBOX_CLONE", False))
+    sandbox_retain: bool = field(
+        default_factory=lambda: _env_bool("AGENT_ARMY_SANDBOX_RETAIN", False))
+    sandbox_max_tool_calls: int = field(
+        default_factory=lambda: _env_int("AGENT_ARMY_SANDBOX_MAX_TOOL_CALLS", 20))
+    sandbox_max_output_chars: int = field(
+        default_factory=lambda: _env_int("AGENT_ARMY_SANDBOX_MAX_OUTPUT_CHARS", 50_000))
 
     # D4/D6: always-on loop + file ledger
     poll_interval_seconds: int = field(

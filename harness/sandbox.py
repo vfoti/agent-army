@@ -12,6 +12,9 @@ backends are provided:
 from __future__ import annotations
 
 import subprocess
+import re
+import shutil
+import sys
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from pathlib import Path
@@ -111,6 +114,89 @@ class DockerExecutor(SandboxExecutor):
         except subprocess.TimeoutExpired as exc:
             return ExecResult(124, exc.stdout or "", f"timeout after {timeout}s")
         return ExecResult(proc.returncode, proc.stdout, proc.stderr)
+
+
+class DockerSandboxExecutor(SandboxExecutor):
+    """A persistent, task-scoped Docker Sandbox microVM managed by ``sbx``."""
+
+    def __init__(
+        self,
+        workdir: Path,
+        task_id: str,
+        template: str = "shell",
+        clone: bool = False,
+    ) -> None:
+        self.workdir = Path(workdir).resolve()
+        safe_id = re.sub(r"[^a-z0-9-]+", "-", task_id.lower()).strip("-")
+        self.name = f"agent-army-{safe_id or 'task'}"[:63].rstrip("-")
+        self.template = template
+        self.clone = clone
+
+    def validate(self) -> None:
+        if shutil.which("sbx") is None:
+            raise RuntimeError("Docker Sandboxes CLI 'sbx' is not installed")
+        if not self.workdir.is_dir():
+            raise RuntimeError(f"sandbox workspace does not exist: {self.workdir}")
+
+    def validate_host(self, timeout: int = 30) -> None:
+        self.validate()
+        if sys.platform.startswith("linux") and not Path("/dev/kvm").exists():
+            raise RuntimeError("Docker Sandboxes requires KVM (/dev/kvm is unavailable)")
+        result = self._invoke(["sbx", "ls"], timeout)
+        if not result.ok:
+            raise RuntimeError(
+                "Docker Sandboxes is unavailable or unauthenticated: "
+                + (result.stderr.strip() or result.stdout.strip())
+            )
+
+    @staticmethod
+    def _invoke(command: List[str], timeout: int) -> ExecResult:
+        try:
+            proc = subprocess.run(
+                command, capture_output=True, text=True, timeout=timeout,
+            )
+        except FileNotFoundError:
+            return ExecResult(127, "", "Docker Sandboxes CLI 'sbx' is not installed")
+        except subprocess.TimeoutExpired as exc:
+            return ExecResult(
+                124,
+                exc.stdout if isinstance(exc.stdout, str) else "",
+                f"timeout after {timeout}s",
+            )
+        return ExecResult(proc.returncode, proc.stdout, proc.stderr)
+
+    def ensure(self, timeout: int = 120) -> ExecResult:
+        """Reconnect to an existing task VM or create it if it is absent."""
+        self.validate()
+        probe = self._invoke(["sbx", "exec", self.name, "true"], timeout)
+        if probe.ok:
+            return probe
+        command = ["sbx", "create", "--name", self.name]
+        if self.clone:
+            command.append("--clone")
+        command += [self.template, str(self.workdir)]
+        return self._invoke(command, timeout)
+
+    def run(self, command: List[str], cwd: Optional[str] = None, timeout: int = 600) -> ExecResult:
+        ready = self.ensure(min(timeout, 120))
+        if not ready.ok:
+            return ready
+        sandbox_command = list(command)
+        if cwd:
+            target = (self.workdir / cwd).resolve()
+            try:
+                target.relative_to(self.workdir)
+            except ValueError:
+                return ExecResult(2, "", "working directory escapes sandbox workspace")
+            sandbox_command = ["sh", "-lc", 'cd "$1" && shift && exec "$@"',
+                               "sh", str(target), *command]
+        return self._invoke(["sbx", "exec", self.name, *sandbox_command], timeout)
+
+    def stop(self, timeout: int = 60) -> ExecResult:
+        return self._invoke(["sbx", "stop", self.name], timeout)
+
+    def remove(self, timeout: int = 60) -> ExecResult:
+        return self._invoke(["sbx", "rm", "--force", self.name], timeout)
 
 
 class E2BExecutor(SandboxExecutor):

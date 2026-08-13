@@ -12,6 +12,11 @@ services:
       AGENT_ARMY_BUDGET_USD_PER_ROLE: ${AGENT_ARMY_BUDGET_USD_PER_ROLE:-2.0}
       AGENT_ARMY_BUDGET_TOKENS_PER_TASK: ${AGENT_ARMY_BUDGET_TOKENS_PER_TASK:-500000}
       AGENT_ARMY_POLL_INTERVAL: ${AGENT_ARMY_POLL_INTERVAL:-60}
+      # Compose retains the legacy container backend. Run the service on a
+      # KVM-capable host to use the docker-sandbox backend.
+      AGENT_ARMY_SANDBOX_BACKEND: ${AGENT_ARMY_SANDBOX_BACKEND:-docker}
+      AGENT_ARMY_SANDBOX_IMAGE: ${AGENT_ARMY_SANDBOX_IMAGE:-python:3.12-slim}
+      AGENT_ARMY_SANDBOX_TIMEOUT: ${AGENT_ARMY_SANDBOX_TIMEOUT:-600}
     volumes:
       # D6: file-based ledger persisted on the host
       - ./tasks:/app/tasks

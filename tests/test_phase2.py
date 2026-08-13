@@ -25,7 +25,7 @@ from harness import (  # noqa: E402
 )
 from harness.anthropic_runner import AnthropicRoleRunner, _extract_json  # noqa: E402
 from harness.models import STATUS_BLOCKED, STATUS_SUCCEEDED  # noqa: E402
-from harness.sandbox import DockerExecutor  # noqa: E402
+from harness.sandbox import DockerExecutor, DockerSandboxExecutor  # noqa: E402
 from harness.service import Service  # noqa: E402
 from harness.intake import FolderIntake  # noqa: E402
 
@@ -226,6 +226,86 @@ class TestDockerExecutor(unittest.TestCase):
             self.assertIn("none", cmd)
             self.assertIn("/workspace/sub", cmd)
             self.assertEqual(cmd[-2:], ["echo", "hi"])
+
+
+class TestDockerSandboxExecutor(unittest.TestCase):
+    def test_creates_deterministic_task_sandbox(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            executor = DockerSandboxExecutor(Path(tmp), "Issue 12/Feature")
+            responses = [
+                mock.Mock(returncode=1, stdout="", stderr="not found"),
+                mock.Mock(returncode=0, stdout="", stderr=""),
+            ]
+            with mock.patch("harness.sandbox.shutil.which", return_value="/bin/sbx"), \
+                    mock.patch("harness.sandbox.subprocess.run", side_effect=responses) as run:
+                result = executor.ensure()
+            self.assertTrue(result.ok)
+            self.assertEqual(executor.name, "agent-army-issue-12-feature")
+            self.assertEqual(
+                run.call_args_list[1].args[0],
+                ["sbx", "create", "--name", executor.name, "shell", str(Path(tmp).resolve())],
+            )
+
+    def test_reuses_existing_sandbox(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            executor = DockerSandboxExecutor(Path(tmp), "task")
+            with mock.patch("harness.sandbox.shutil.which", return_value="/bin/sbx"), \
+                    mock.patch("harness.sandbox.subprocess.run") as run:
+                run.return_value = mock.Mock(returncode=0, stdout="", stderr="")
+                executor.ensure()
+            run.assert_called_once()
+            self.assertEqual(run.call_args.args[0], ["sbx", "exec", executor.name, "true"])
+
+    def test_rejects_escaping_working_directory(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            executor = DockerSandboxExecutor(Path(tmp), "task")
+            with mock.patch.object(executor, "ensure", return_value=mock.Mock(ok=True)):
+                result = executor.run(["echo", "no"], cwd="../outside")
+            self.assertEqual(result.exit_code, 2)
+
+    def test_missing_cli_is_reported(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            executor = DockerSandboxExecutor(Path(tmp), "task")
+            with mock.patch("harness.sandbox.shutil.which", return_value=None):
+                with self.assertRaisesRegex(RuntimeError, "not installed"):
+                    executor.ensure()
+
+
+class TestSandboxToolExecution(unittest.TestCase):
+    def test_role_cannot_invoke_undeclared_tool(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config = Config()
+            agents = load_all_agents(AGENTS_DIR)
+            runner = AnthropicRoleRunner(
+                agents["analysis"], AGENTS_DIR, config,
+                BudgetGuard(config, TaskLedger(Path(tmp) / "ledger")),
+                Path(tmp),
+            )
+            with self.assertRaisesRegex(ValueError, "not allowed"):
+                runner._execute_tool(hello_task(), "sandbox_exec", {"command": ["true"]})
+
+    def test_sandbox_exec_caps_timeout_and_redacts_secrets(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config = Config()
+            config.anthropic_api_key = "very-secret"
+            config.sandbox_timeout = 10
+            agents = load_all_agents(AGENTS_DIR)
+            executor = mock.Mock()
+            executor.run.return_value = mock.Mock(
+                exit_code=0, stdout="very-secret", stderr="")
+            runner = AnthropicRoleRunner(
+                agents["code"], AGENTS_DIR, config,
+                BudgetGuard(config, TaskLedger(Path(tmp) / "ledger")),
+                Path(tmp), lambda task: executor,
+            )
+            output = runner._execute_tool(
+                hello_task(), "sandbox_exec",
+                {"command": ["echo", "ok"], "timeout": 999},
+            )
+            self.assertNotIn("very-secret", output)
+            self.assertIn("[REDACTED]", output)
+            executor.run.assert_called_once_with(
+                ["echo", "ok"], cwd=None, timeout=10)
 
 
 class TestServiceLoop(unittest.TestCase):

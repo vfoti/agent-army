@@ -50,3 +50,8 @@ class TaskLedger:
         if role is None:
             return results
         return [r for r in results if r["role"] == role]
+
+    def record_sandbox(self, task_id: str, name: str, status: str) -> None:
+        state = self.load(task_id)
+        state["sandbox"] = {"name": name, "status": status}
+        self.save(state)

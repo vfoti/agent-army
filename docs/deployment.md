@@ -53,6 +53,52 @@ Without Docker (bare local run): `python3 -m harness.service`
 (needs `pip install anthropic`). For offline testing:
 `python3 -m harness.service --folder --dry-run --once`.
 
+## Docker Sandboxes microVM backend
+
+Run the harness directly on an Ubuntu 24.04 or newer host with KVM enabled.
+If the host is a VM, enable nested virtualization. Install `docker-sbx`, add
+the service user to the `kvm` group, run `sbx login`, and verify `sbx ls`
+before starting the service. Docker Desktop is not required.
+
+```bash
+AGENT_ARMY_SANDBOX_BACKEND=docker-sandbox
+AGENT_ARMY_SANDBOX_TEMPLATE=shell
+AGENT_ARMY_SANDBOX_CLONE=false
+AGENT_ARMY_SANDBOX_RETAIN=false
+AGENT_ARMY_SANDBOX_TIMEOUT=600
+AGENT_ARMY_SANDBOX_MAX_TOOL_CALLS=20
+AGENT_ARMY_SANDBOX_MAX_OUTPUT_CHARS=50000
+python3 -m harness.service --folder
+```
+
+Direct mode shares the host workspace read-write. Set
+`AGENT_ARMY_SANDBOX_CLONE=true` for a private in-VM clone when parallel tasks
+must be isolated. A deterministic sandbox name allows recovery after a service
+restart. On successful task completion the VM is removed; with retention
+enabled it is stopped and kept for debugging.
+
+Configure network allowlists with `sbx policy` and credentials with
+`sbx secret`; credentials are not forwarded by the harness. The service checks
+the CLI, workspace, KVM, daemon, and authentication at startup. Authentication
+errors appear in the `sbx ls` diagnostic.
+
+The supplied Compose deployment intentionally remains on the legacy
+ephemeral-container backend and mounts the host Docker socket. Do not select
+`docker-sandbox` there unless the container has been explicitly provisioned
+with the `sbx` daemon access and `/dev/kvm`; host deployment is preferred.
+
+For a pilot, use folder intake and a disposable Git checkout first. Confirm
+workspace changes, network policy, cleanup, and ledger state before enabling
+GitHub issue intake.
+
+Troubleshooting:
+
+- `sbx is not installed`: install the Docker Sandboxes CLI on the harness host.
+- `KVM ... unavailable`: enable virtualization and grant the user `/dev/kvm`.
+- `unavailable or unauthenticated`: run `sbx login`, then verify `sbx ls`.
+- Retained or failed sandboxes: inspect with `sbx ls` and remove with
+  `sbx rm --force <name>`.
+
 ## Workflow
 
 1. Open a GitHub issue, label it `agent-task`. Optionally include a

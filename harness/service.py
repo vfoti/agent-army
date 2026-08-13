@@ -26,6 +26,9 @@ from .ledger import TaskLedger
 from .models import Task
 from .orchestrator import Orchestrator
 from .runners import NullRoleRunner, RoleRunner
+from .sandbox import (
+    DockerExecutor, DockerSandboxExecutor, LocalExecutor, SandboxExecutor,
+)
 
 log = logging.getLogger("agent-army")
 
@@ -40,15 +43,60 @@ class Service:
         data_dir = config.data_dir if config.data_dir.is_absolute() else REPO_ROOT / config.data_dir
         self.ledger = TaskLedger(data_dir / "ledger")
         self.budget = BudgetGuard(config, self.ledger)
+        self._executors: Dict[str, SandboxExecutor] = {}
+        if config.sandbox_backend not in {"local", "docker", "docker-sandbox"}:
+            raise ValueError(f"unknown sandbox backend: {config.sandbox_backend}")
+        if config.sandbox_backend == "docker-sandbox":
+            DockerSandboxExecutor(
+                REPO_ROOT, "startup-check", config.sandbox_template,
+                config.sandbox_clone,
+            ).validate_host()
         agents = load_all_agents(AGENTS_DIR)
         runners: Dict[str, RoleRunner] = {}
         for role, agent in agents.items():
             if dry_run:
                 runners[role] = NullRoleRunner(agent, AGENTS_DIR)
             else:
-                runners[role] = AnthropicRoleRunner(agent, AGENTS_DIR, config, self.budget)
+                runners[role] = AnthropicRoleRunner(
+                    agent, AGENTS_DIR, config, self.budget, REPO_ROOT,
+                    self._executor_for,
+                )
         self.orchestrator = Orchestrator(runners, self.ledger, self.intake)
         self.active_tasks: Dict[str, Task] = {}
+
+    def _executor_for(self, task: Task) -> SandboxExecutor:
+        existing = self._executors.get(task.task_id)
+        if existing is not None:
+            return existing
+        if self.config.sandbox_backend == "docker-sandbox":
+            executor: SandboxExecutor = DockerSandboxExecutor(
+                REPO_ROOT, task.task_id, self.config.sandbox_template,
+                self.config.sandbox_clone,
+            )
+            ready = executor.ensure(self.config.sandbox_timeout)  # type: ignore[attr-defined]
+            if not ready.ok:
+                self.ledger.record_sandbox(task.task_id, executor.name, "failed")  # type: ignore[attr-defined]
+                raise RuntimeError(ready.stderr or ready.stdout)
+            self.ledger.record_sandbox(task.task_id, executor.name, "running")  # type: ignore[attr-defined]
+        elif self.config.sandbox_backend == "docker":
+            executor = DockerExecutor(REPO_ROOT, image=self.config.sandbox_image)
+        else:
+            executor = LocalExecutor(REPO_ROOT)
+        self._executors[task.task_id] = executor
+        return executor
+
+    def _cleanup_sandbox(self, task: Task) -> None:
+        executor = self._executors.pop(task.task_id, None)
+        if not isinstance(executor, DockerSandboxExecutor):
+            return
+        if self.config.sandbox_retain:
+            stopped = executor.stop()
+            self.ledger.record_sandbox(
+                task.task_id, executor.name, "retained" if stopped.ok else "stop_failed")
+        else:
+            removed = executor.remove()
+            self.ledger.record_sandbox(
+                task.task_id, executor.name, "removed" if removed.ok else "remove_failed")
 
     def _sync_approvals(self, task: Task) -> None:
         if isinstance(self.intake, GitHubIssueIntake):
@@ -74,6 +122,7 @@ class Service:
                          if r["status"] == "succeeded"}
             if completed >= set(task.roles):
                 log.info("task %s complete", task.task_id)
+                self._cleanup_sandbox(task)
                 del self.active_tasks[task.task_id]
 
     def run_forever(self) -> None:
