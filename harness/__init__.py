@@ -5,7 +5,10 @@ from .intake import IntakeAdapter, FolderIntake, GitHubIssueIntake
 from .ledger import TaskLedger
 from .orchestrator import Orchestrator
 from .runners import RoleRunner, PromptRoleRunner, NullRoleRunner
-from .sandbox import SandboxExecutor, LocalExecutor, DockerExecutor, E2BExecutor, GitHubRunnerExecutor
+from .sandbox import (
+    SandboxExecutor, LocalExecutor, DockerExecutor, DockerSandboxExecutor,
+    E2BExecutor, GitHubRunnerExecutor,
+)
 from .config import Config
 from .budget import BudgetGuard, BudgetExceeded
 
@@ -15,6 +18,7 @@ __all__ = [
     "IntakeAdapter", "FolderIntake", "GitHubIssueIntake",
     "TaskLedger", "Orchestrator",
     "RoleRunner", "PromptRoleRunner", "NullRoleRunner",
-    "SandboxExecutor", "LocalExecutor", "DockerExecutor", "E2BExecutor", "GitHubRunnerExecutor",
+    "SandboxExecutor", "LocalExecutor", "DockerExecutor", "DockerSandboxExecutor",
+    "E2BExecutor", "GitHubRunnerExecutor",
     "Config", "BudgetGuard", "BudgetExceeded",
 ]

@@ -6,6 +6,9 @@ tools:
   - repo_read
   - sandbox_exec
   - doc_write
+  - database_query
+  - database_schema
+  - database_migrate
 inputs:
   task: Task envelope (see harness/schemas/task.schema.json)
   code: Delivery increments (branches/PRs) from the code role
@@ -51,6 +54,7 @@ Verify delivered increments against requirements and contracts, and gate promoti
 - Derive test cases from requirement IDs and API contracts, not from implementation details.
 - Execute suites inside the configured sandbox executor and capture evidence.
 - Fail the gate if any acceptance criterion lacks passing evidence or a requirement lacks feature coverage.
+- Verify DB2-to-PostgreSQL schema and data invariants with read-only queries; apply migrations only to an isolated PostgreSQL test target.
 
 ## Suggested sub-agent usage
 

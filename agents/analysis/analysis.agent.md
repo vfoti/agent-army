@@ -5,6 +5,8 @@ description: Ingests instructions and source material; produces requirements, in
 tools:
   - repo_read
   - doc_write
+  - database_query
+  - database_schema
 inputs:
   task: Task envelope (see harness/schemas/task.schema.json)
   sources: Legacy source material (COBOL, SQL, Java) or any codebase under analysis
@@ -51,6 +53,7 @@ Scan source material and instructions from the intake task and produce traceable
 - Delegate source parsing and rule extraction to sub-agents instead of doing monolithic analysis.
 - Merge only validated sub-agent summaries.
 - Keep requirements atomic, testable, and source-traceable.
+- Use read-only DB2 and PostgreSQL inspection to inventory schemas and compare behavior; never request credentials in task content.
 
 ## Suggested sub-agent usage
 

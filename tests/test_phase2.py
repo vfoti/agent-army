@@ -4,9 +4,12 @@ and the always-on service loop."""
 from __future__ import annotations
 
 import json
+import os
+import shutil
 import sys
 import tempfile
 import unittest
+import uuid
 from pathlib import Path
 from unittest import mock
 
@@ -25,7 +28,7 @@ from harness import (  # noqa: E402
 )
 from harness.anthropic_runner import AnthropicRoleRunner, _extract_json  # noqa: E402
 from harness.models import STATUS_BLOCKED, STATUS_SUCCEEDED  # noqa: E402
-from harness.sandbox import DockerExecutor  # noqa: E402
+from harness.sandbox import DockerExecutor, DockerSandboxExecutor  # noqa: E402
 from harness.service import Service  # noqa: E402
 from harness.intake import FolderIntake  # noqa: E402
 
@@ -151,6 +154,68 @@ class TestAnthropicRoleRunner(unittest.TestCase):
             self.assertEqual(result.status, STATUS_BLOCKED)
             client.messages.create.assert_not_called()
 
+    def test_runs_bounded_role_scoped_tool_loop(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config = Config()
+            config.anthropic_api_key = "test-key"
+            ledger = TaskLedger(Path(tmp) / "ledger")
+            agents = load_all_agents(AGENTS_DIR)
+            executor = mock.Mock()
+            executor.run.return_value = mock.Mock(
+                exit_code=0, stdout="ok", stderr="")
+            runner = AnthropicRoleRunner(
+                agents["code"], AGENTS_DIR, config, BudgetGuard(config, ledger),
+                Path(tmp), lambda task: executor,
+            )
+            tool_use = mock.Mock(
+                type="tool_use", id="call-1", input={"command": ["true"]})
+            tool_use.name = "sandbox_exec"
+            first = mock.Mock(
+                content=[tool_use],
+                usage=mock.Mock(input_tokens=10, output_tokens=5),
+            )
+            second = _FakeResponse(
+                '{"status": "succeeded", "summary": "tool complete"}')
+            client = mock.Mock()
+            client.messages.create.side_effect = [first, second]
+            anthropic_mod = mock.Mock()
+            anthropic_mod.Anthropic.return_value = client
+            with mock.patch.dict(sys.modules, {"anthropic": anthropic_mod}):
+                result = runner.run(hello_task(), [])
+            self.assertEqual(result.status, STATUS_SUCCEEDED)
+            executor.run.assert_called_once()
+            second_call = client.messages.create.call_args_list[1].kwargs
+            self.assertEqual(
+                second_call["messages"][-1]["content"][0]["type"], "tool_result")
+
+    def test_persistent_sandbox_failure_blocks_without_retry(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config = Config()
+            config.anthropic_api_key = "test-key"
+            agents = load_all_agents(AGENTS_DIR)
+            runner = AnthropicRoleRunner(
+                agents["code"], AGENTS_DIR, config,
+                BudgetGuard(config, TaskLedger(Path(tmp) / "ledger")),
+                Path(tmp), lambda task: (_ for _ in ()).throw(
+                    RuntimeError("sbx unavailable")),
+            )
+            tool_use = mock.Mock(
+                type="tool_use", id="call-1", input={"command": ["true"]})
+            tool_use.name = "sandbox_exec"
+            response = mock.Mock(
+                content=[tool_use],
+                usage=mock.Mock(input_tokens=10, output_tokens=5),
+            )
+            client = mock.Mock()
+            client.messages.create.return_value = response
+            anthropic_mod = mock.Mock()
+            anthropic_mod.Anthropic.return_value = client
+            with mock.patch.dict(sys.modules, {"anthropic": anthropic_mod}):
+                result = runner.run(hello_task(), [])
+            self.assertEqual(result.status, STATUS_BLOCKED)
+            self.assertIn("sbx unavailable", result.summary)
+            client.messages.create.assert_called_once()
+
 
 class TestGitHubIssueIntake(unittest.TestCase):
     def _intake(self) -> GitHubIssueIntake:
@@ -228,6 +293,219 @@ class TestDockerExecutor(unittest.TestCase):
             self.assertEqual(cmd[-2:], ["echo", "hi"])
 
 
+class TestDockerSandboxExecutor(unittest.TestCase):
+    def test_creates_deterministic_task_sandbox(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            executor = DockerSandboxExecutor(Path(tmp), "Issue 12/Feature")
+            responses = [
+                mock.Mock(returncode=1, stdout="", stderr="not found"),
+                mock.Mock(returncode=0, stdout="", stderr=""),
+            ]
+            with mock.patch("harness.sandbox.shutil.which", return_value="/bin/sbx"), \
+                    mock.patch("harness.sandbox.subprocess.run", side_effect=responses) as run:
+                result = executor.ensure()
+            self.assertTrue(result.ok)
+            self.assertEqual(executor.name, "agent-army-issue-12-feature")
+            self.assertEqual(
+                run.call_args_list[1].args[0],
+                ["sbx", "create", "--name", executor.name, "shell", str(Path(tmp).resolve())],
+            )
+
+    def test_reuses_existing_sandbox(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            executor = DockerSandboxExecutor(Path(tmp), "task")
+            with mock.patch("harness.sandbox.shutil.which", return_value="/bin/sbx"), \
+                    mock.patch("harness.sandbox.subprocess.run") as run:
+                run.return_value = mock.Mock(returncode=0, stdout="", stderr="")
+                executor.ensure()
+            run.assert_called_once()
+            self.assertEqual(run.call_args.args[0], ["sbx", "exec", executor.name, "true"])
+
+    def test_run_skips_probe_after_executor_is_ready(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            executor = DockerSandboxExecutor(Path(tmp), "task")
+            executor._ready = True
+            with mock.patch("harness.sandbox.shutil.which", return_value="/bin/sbx"), \
+                    mock.patch("harness.sandbox.subprocess.run") as run:
+                run.return_value = mock.Mock(returncode=0, stdout="", stderr="")
+                result = executor.run(["true"])
+            self.assertTrue(result.ok)
+            run.assert_called_once_with(
+                ["sbx", "exec", executor.name, "true"],
+                capture_output=True, text=True, timeout=600,
+            )
+
+    def test_rejects_escaping_working_directory(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            executor = DockerSandboxExecutor(Path(tmp), "task")
+            with mock.patch.object(executor, "ensure", return_value=mock.Mock(ok=True)):
+                result = executor.run(["echo", "no"], cwd="../outside")
+            self.assertEqual(result.exit_code, 2)
+
+    def test_missing_cli_is_reported(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            executor = DockerSandboxExecutor(Path(tmp), "task")
+            with mock.patch("harness.sandbox.shutil.which", return_value=None):
+                with self.assertRaisesRegex(RuntimeError, "not installed"):
+                    executor.ensure()
+
+    @unittest.skipUnless(
+        os.environ.get("AGENT_ARMY_RUN_SBX_INTEGRATION") == "1"
+        and shutil.which("sbx"),
+        "set AGENT_ARMY_RUN_SBX_INTEGRATION=1 with sbx installed",
+    )
+    def test_live_shell_sandbox(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            executor = DockerSandboxExecutor(
+                Path(tmp), f"integration-{uuid.uuid4().hex[:10]}")
+            try:
+                self.assertTrue(executor.ensure(timeout=180).ok)
+                result = executor.run(
+                    ["sh", "-c", "printf sandbox-ok"], timeout=30)
+                self.assertTrue(result.ok, result.stderr)
+                self.assertEqual(result.stdout, "sandbox-ok")
+            finally:
+                executor.remove(timeout=60)
+
+
+class TestSandboxConfig(unittest.TestCase):
+    def test_docker_sandbox_environment(self):
+        environment = {
+            "AGENT_ARMY_SANDBOX_BACKEND": "docker-sandbox",
+            "AGENT_ARMY_SANDBOX_TEMPLATE": "custom-shell",
+            "AGENT_ARMY_SANDBOX_CLONE": "true",
+            "AGENT_ARMY_SANDBOX_RETAIN": "1",
+            "AGENT_ARMY_SANDBOX_TIMEOUT": "42",
+        }
+        with mock.patch.dict(os.environ, environment, clear=False):
+            config = Config()
+        self.assertEqual(config.sandbox_backend, "docker-sandbox")
+        self.assertEqual(config.sandbox_template, "custom-shell")
+        self.assertTrue(config.sandbox_clone)
+        self.assertTrue(config.sandbox_retain)
+        self.assertEqual(config.sandbox_timeout, 42)
+
+
+class TestSandboxToolExecution(unittest.TestCase):
+    def test_role_cannot_invoke_undeclared_tool(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config = Config()
+            agents = load_all_agents(AGENTS_DIR)
+            runner = AnthropicRoleRunner(
+                agents["analysis"], AGENTS_DIR, config,
+                BudgetGuard(config, TaskLedger(Path(tmp) / "ledger")),
+                Path(tmp),
+            )
+            with self.assertRaisesRegex(ValueError, "not allowed"):
+                runner._execute_tool(hello_task(), "sandbox_exec", {"command": ["true"]})
+
+    def test_sandbox_exec_caps_timeout_and_redacts_secrets(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config = Config()
+            config.anthropic_api_key = "very-secret"
+            config.sandbox_timeout = 10
+            agents = load_all_agents(AGENTS_DIR)
+            executor = mock.Mock()
+            executor.run.return_value = mock.Mock(
+                exit_code=0, stdout="very-secret", stderr="")
+            runner = AnthropicRoleRunner(
+                agents["code"], AGENTS_DIR, config,
+                BudgetGuard(config, TaskLedger(Path(tmp) / "ledger")),
+                Path(tmp), lambda task: executor,
+            )
+            output = runner._execute_tool(
+                hello_task(), "sandbox_exec",
+                {"command": ["echo", "ok"], "timeout": 999},
+            )
+            self.assertNotIn("very-secret", output)
+            self.assertIn("[REDACTED]", output)
+            executor.run.assert_called_once_with(
+                ["echo", "ok"], cwd=None, timeout=10)
+
+    def test_database_query_is_read_only_and_uses_postgres_service(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config = Config()
+            config.postgres_service = "migration-target"
+            agents = load_all_agents(AGENTS_DIR)
+            executor = mock.Mock()
+            executor.run.return_value = mock.Mock(
+                exit_code=0, stdout="count\n2\n", stderr="")
+            runner = AnthropicRoleRunner(
+                agents["analysis"], AGENTS_DIR, config,
+                BudgetGuard(config, TaskLedger(Path(tmp) / "ledger")),
+                Path(tmp), lambda task: executor,
+            )
+
+            output = runner._execute_tool(
+                hello_task(), "database_query",
+                {"database": "postgres", "sql": "SELECT count(*) FROM accounts"},
+            )
+
+            self.assertIn("count", output)
+            command = executor.run.call_args.args[0]
+            self.assertEqual(command[:2], ["psql", "service=migration-target"])
+            self.assertIn("BEGIN READ ONLY;", command[-1])
+            with self.assertRaisesRegex(ValueError, "read-only"):
+                runner._execute_tool(
+                    hello_task(), "database_query",
+                    {"database": "postgres", "sql": "DROP TABLE accounts"},
+                )
+
+    def test_db2_schema_uses_configured_catalog_alias(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config = Config()
+            config.db2_database = "LEGACY"
+            agents = load_all_agents(AGENTS_DIR)
+            executor = mock.Mock()
+            executor.run.return_value = mock.Mock(
+                exit_code=0, stdout="ddl", stderr="")
+            runner = AnthropicRoleRunner(
+                agents["design"], AGENTS_DIR, config,
+                BudgetGuard(config, TaskLedger(Path(tmp) / "ledger")),
+                Path(tmp), lambda task: executor,
+            )
+
+            runner._execute_tool(
+                hello_task(), "database_schema", {"database": "db2"})
+
+            executor.run.assert_called_once_with(
+                ["db2look", "-d", "LEGACY", "-e", "-x"],
+                cwd=None, timeout=config.sandbox_timeout,
+            )
+
+    def test_database_migrate_confines_sql_file_to_workspace(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp)
+            migration = workspace / "migrations" / "001_accounts.sql"
+            migration.parent.mkdir()
+            migration.write_text("CREATE TABLE accounts (id bigint);", encoding="utf-8")
+            config = Config()
+            config.postgres_service = "migration-target"
+            agents = load_all_agents(AGENTS_DIR)
+            executor = mock.Mock()
+            executor.run.return_value = mock.Mock(
+                exit_code=0, stdout="CREATE TABLE", stderr="")
+            runner = AnthropicRoleRunner(
+                agents["code"], AGENTS_DIR, config,
+                BudgetGuard(config, TaskLedger(workspace / "ledger")),
+                workspace, lambda task: executor,
+            )
+
+            runner._execute_tool(
+                hello_task(), "database_migrate",
+                {"path": "migrations/001_accounts.sql"},
+            )
+
+            command = executor.run.call_args.args[0]
+            self.assertEqual(command[:2], ["psql", "service=migration-target"])
+            self.assertIn("--single-transaction", command)
+            self.assertEqual(command[-1], "migrations/001_accounts.sql")
+            self.assertEqual(executor.run.call_args.kwargs["cwd"], ".")
+            with self.assertRaisesRegex(ValueError, "escapes"):
+                runner._execute_tool(
+                    hello_task(), "database_migrate", {"path": "../outside.sql"})
+
+
 class TestServiceLoop(unittest.TestCase):
     def test_dry_run_cycle_over_folder_intake(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -251,6 +529,22 @@ class TestServiceLoop(unittest.TestCase):
                          if r["status"] == "succeeded"}
             self.assertEqual(completed, {"analysis", "design", "code", "test"})
             self.assertNotIn("hello-world-001", service.active_tasks)
+
+    def test_restores_incomplete_tasks_from_ledger(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            inbox = tmp_path / "inbox"
+            inbox.mkdir()
+            config = Config()
+            config.data_dir = tmp_path
+            intake = FolderIntake(inbox, tmp_path / "outbox")
+            ledger = TaskLedger(tmp_path / "ledger")
+            ledger.record_task(hello_task())
+            ledger.record_result(Result(
+                task_id="hello-world-001", role="analysis",
+                status=STATUS_SUCCEEDED))
+            restarted = Service(config, intake, dry_run=True)
+            self.assertIn("hello-world-001", restarted.active_tasks)
 
 
 if __name__ == "__main__":

@@ -15,7 +15,7 @@ The harness in `harness/` orchestrates the four agent roles (analysis, design, c
 4. **Role runners** (`harness/runners.py`) — bind an `AgentDefinition` (loaded from `agents/<role>/<role>.agent.md` frontmatter) to an execution backend:
    - `PromptRoleRunner` — composes shared instructions + role prompt + task context and delegates to a pluggable `invoke` callable (LangChain/deepagents, Copilot coding agent, or direct model API).
    - `NullRoleRunner` — dry-run backend for testing the pipeline.
-5. **Sandbox layer** (`harness/sandbox.py`) — pluggable `SandboxExecutor` for the code/test roles: `LocalExecutor` (functional), `E2BExecutor` and `GitHubRunnerExecutor` (integration stubs). See `docs/runtime-evaluation.md`.
+5. **Sandbox layer** (`harness/sandbox.py`) — pluggable `SandboxExecutor` for the code/test roles: `LocalExecutor`, ephemeral-container `DockerExecutor`, and persistent task-scoped `DockerSandboxExecutor` are functional; `E2BExecutor` and `GitHubRunnerExecutor` are integration stubs. Docker Sandboxes are reused by code and test, recovered by deterministic task name after service restarts, and removed at task completion unless retention is enabled.
 6. **Task ledger** (`harness/ledger.py`) — per-task JSON state (results, approvals) under `tasks/ledger/`, enabling pause/resume across processes. The recorded artifacts form the traceability index: task → requirement → design → PR → test evidence.
 
 ## CLI
@@ -35,4 +35,4 @@ python3 -m unittest tests.test_harness
 
 ## LangChain / deepagents integration
 
-To run roles with LangChain's deepagents harness, implement the `invoke` callable of `PromptRoleRunner` with a deep agent configured from the `AgentDefinition`: its composed system prompt (`build_system_prompt`), its `subagents` list as deepagents subagents, and role-scoped tools (analysis/design: read-only repo + doc writing; code: sandboxed write + git; test: sandboxed execution). Replace the orchestrator with a LangGraph graph using interrupts at the gates when durable, multi-process execution is needed, keeping the same Task/Result contracts.
+The Anthropic runner exposes only tools declared by each agent. Repository paths are confined to the workspace, sandbox commands use argv rather than a host shell, time and output are capped, and configured API tokens are redacted from tool results. To run roles with LangChain's deepagents harness, implement the `invoke` callable of `PromptRoleRunner` with the same role-scoped tools and contracts.

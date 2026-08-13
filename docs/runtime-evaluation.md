@@ -1,6 +1,18 @@
-# Runtime Evaluation: e2b.dev vs LangChain vs GitHub Sandboxes
+# Runtime Evaluation: Docker Sandboxes, e2b.dev, LangChain, and GitHub Sandboxes
 
 These options are not strictly interchangeable — e2b and GitHub provide *sandboxes*, LangChain provides *orchestration* — so they are evaluated along those axes.
+
+## Docker Sandboxes (local microVMs)
+
+Docker Sandboxes runs each task in a persistent microVM with its own Docker
+daemon, filesystem, and governed network. `DockerSandboxExecutor` creates one
+`shell` sandbox per task, mounts the workspace directly by default, and reuses
+it for code and test. This avoids exposing the host Docker socket to autonomous
+agents. It requires the `sbx` CLI, authentication, and KVM (including nested
+virtualization when the host is itself a VM).
+
+This is the recommended local execution backend. Use clone mode when concurrent
+tasks must not modify the same host working tree.
 
 ## e2b.dev (Firecracker microVM sandboxes)
 
@@ -42,10 +54,11 @@ Not a sandbox — the orchestration/harness layer.
 
 **Harness fit:** implement `GitHubRunnerExecutor` via `workflow_dispatch`, and `GitHubIssueIntake` via webhooks; or bypass the harness entirely and deploy the role prompts as Copilot custom agents.
 
-## Recommendation: hybrid
+## Recommendation
 
-- **LangGraph/deepagents as the harness** for orchestration and state.
-- **e2b as the execution sandbox** for the code and test roles.
+- **The existing harness** for orchestration and governance.
+- **Docker Sandboxes** for local, VM-isolated code and test execution.
+- **e2b** when a hosted sandbox is preferable.
 - **GitHub-native mode** (Copilot coding agent) as a lightweight deployment target reusing the same role prompts.
 
 The structured frontmatter agent definitions in `agents/` keep the prompts portable across all three.
