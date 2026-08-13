@@ -500,6 +500,7 @@ class TestSandboxToolExecution(unittest.TestCase):
             self.assertEqual(command[:2], ["psql", "service=migration-target"])
             self.assertIn("--single-transaction", command)
             self.assertEqual(command[-1], "migrations/001_accounts.sql")
+            self.assertEqual(executor.run.call_args.kwargs["cwd"], ".")
             with self.assertRaisesRegex(ValueError, "escapes"):
                 runner._execute_tool(
                     hello_task(), "database_migrate", {"path": "../outside.sql"})

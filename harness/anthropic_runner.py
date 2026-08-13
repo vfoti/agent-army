@@ -158,7 +158,7 @@ class AnthropicRoleRunner(RoleRunner):
             raise ValueError("database_query accepts exactly one SQL statement")
         without_strings = re.sub(r"'(?:''|[^'])*'", "''", statement)
         first = without_strings.split(None, 1)[0].upper()
-        if first not in {"SELECT", "WITH", "VALUES", "EXPLAIN", "DESCRIBE"}:
+        if first not in {"SELECT", "WITH", "VALUES", "EXPLAIN"}:
             raise ValueError("database_query only accepts read-only SQL")
         prohibited = (
             r"\b(INSERT|UPDATE|DELETE|MERGE|CALL|CREATE|ALTER|DROP|TRUNCATE|"
@@ -239,7 +239,7 @@ class AnthropicRoleRunner(RoleRunner):
                 if not isinstance(raw_command, list) or not raw_command:
                     raise ValueError("command must be a non-empty argv list")
                 command = [str(value) for value in raw_command]
-            cwd = arguments.get("cwd")
+            cwd = "." if name == "database_migrate" else arguments.get("cwd")
             if cwd:
                 self._workspace_path(str(cwd))
             requested = int(arguments.get("timeout", self.config.sandbox_timeout))
