@@ -7,6 +7,9 @@ tools:
   - repo_write
   - git
   - sandbox_exec
+  - database_query
+  - database_schema
+  - database_migrate
 inputs:
   task: Task envelope (see harness/schemas/task.schema.json)
   design: Approved architecture artifacts and requirements baseline
@@ -50,6 +53,7 @@ Implement approved architecture using focused frontend and backend delivery slic
 - Use sub-agents per feature slice to avoid high-context monolithic implementation.
 - Ensure each delivery increment maintains traceability to requirements and architecture decisions.
 - Run builds inside the configured sandbox executor; never assume host tooling.
+- Keep migrations in reviewed SQL files, inspect both databases before applying them, and apply only to the configured PostgreSQL target.
 
 ## Suggested sub-agent usage
 

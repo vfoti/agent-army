@@ -74,6 +74,13 @@ class Config:
     sandbox_max_output_chars: int = field(
         default_factory=lambda: _env_int("AGENT_ARMY_SANDBOX_MAX_OUTPUT_CHARS", 50_000))
 
+    # Database tools. Authentication stays in CLI-native profiles so secrets
+    # are never accepted as model tool arguments.
+    db2_database: str = field(
+        default_factory=lambda: os.environ.get("AGENT_ARMY_DB2_DATABASE", ""))
+    postgres_service: str = field(
+        default_factory=lambda: os.environ.get("AGENT_ARMY_POSTGRES_SERVICE", ""))
+
     # D4/D6: always-on loop + file ledger
     poll_interval_seconds: int = field(
         default_factory=lambda: _env_int("AGENT_ARMY_POLL_INTERVAL", 60))

@@ -5,6 +5,8 @@ description: Turns approved analysis into architecture, data models, API contrac
 tools:
   - repo_read
   - doc_write
+  - database_query
+  - database_schema
 inputs:
   task: Task envelope (see harness/schemas/task.schema.json)
   analysis: Approved requirements artifacts and traceability matrix from the analysis role
@@ -49,6 +51,7 @@ Convert approved requirements into target architecture for Angular + Spring.
 - Delegate API and data design details to focused sub-agents.
 - Keep architecture decisions linked to requirements IDs.
 - Stop when architecture artifacts are approval-ready.
+- Inspect the DB2 source and PostgreSQL target when designing type mappings, compatibility decisions, and migration sequencing.
 
 ## Suggested sub-agent usage
 

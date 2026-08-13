@@ -10,6 +10,7 @@ dependency-free; install with `pip install anthropic`.
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
@@ -95,6 +96,40 @@ class AnthropicRoleRunner(RoleRunner):
                     "args": {"type": "array", "items": {"type": "string"}},
                     "cwd": {"type": "string"}}, "required": ["args"]},
             },
+            "database_query": {
+                "name": "database_query",
+                "description": (
+                    "Run one read-only SQL query against the configured DB2 source "
+                    "or PostgreSQL target."
+                ),
+                "input_schema": {"type": "object", "properties": {
+                    "database": {"type": "string", "enum": ["db2", "postgres"]},
+                    "sql": {"type": "string"},
+                    "timeout": {"type": "integer", "minimum": 1}},
+                    "required": ["database", "sql"]},
+            },
+            "database_schema": {
+                "name": "database_schema",
+                "description": (
+                    "Extract DDL metadata from the configured DB2 source or "
+                    "PostgreSQL target."
+                ),
+                "input_schema": {"type": "object", "properties": {
+                    "database": {"type": "string", "enum": ["db2", "postgres"]},
+                    "timeout": {"type": "integer", "minimum": 1}},
+                    "required": ["database"]},
+            },
+            "database_migrate": {
+                "name": "database_migrate",
+                "description": (
+                    "Apply a workspace SQL migration file transactionally to the "
+                    "configured PostgreSQL target."
+                ),
+                "input_schema": {"type": "object", "properties": {
+                    "path": {"type": "string"},
+                    "timeout": {"type": "integer", "minimum": 1}},
+                    "required": ["path"]},
+            },
         }
         return [definitions[name] for name in self.agent.tools if name in definitions]
 
@@ -112,6 +147,69 @@ class AnthropicRoleRunner(RoleRunner):
                 text = text.replace(secret, "[REDACTED]")
         return text[:self.config.sandbox_max_output_chars]
 
+    @staticmethod
+    def _read_only_sql(sql: str) -> str:
+        cleaned = re.sub(r"/\*.*?\*/", " ", sql, flags=re.DOTALL)
+        cleaned = re.sub(r"--[^\n]*", " ", cleaned).strip()
+        if not cleaned:
+            raise ValueError("SQL query is empty")
+        statement = cleaned[:-1].rstrip() if cleaned.endswith(";") else cleaned
+        if ";" in statement:
+            raise ValueError("database_query accepts exactly one SQL statement")
+        without_strings = re.sub(r"'(?:''|[^'])*'", "''", statement)
+        first = without_strings.split(None, 1)[0].upper()
+        if first not in {"SELECT", "WITH", "VALUES", "EXPLAIN", "DESCRIBE"}:
+            raise ValueError("database_query only accepts read-only SQL")
+        prohibited = (
+            r"\b(INSERT|UPDATE|DELETE|MERGE|CALL|CREATE|ALTER|DROP|TRUNCATE|"
+            r"GRANT|REVOKE|RENAME|COMMENT|SET)\b"
+        )
+        if re.search(prohibited, without_strings, flags=re.IGNORECASE):
+            raise ValueError("database_query only accepts read-only SQL")
+        return statement
+
+    def _database_command(self, name: str, arguments: Dict[str, Any]) -> List[str]:
+        if name == "database_migrate":
+            if not self.config.postgres_service:
+                raise RuntimeError("AGENT_ARMY_POSTGRES_SERVICE is not configured")
+            raw_path = str(arguments["path"])
+            path = self._workspace_path(raw_path)
+            if path.suffix.lower() != ".sql" or not path.is_file():
+                raise ValueError("database_migrate path must be an existing .sql file")
+            relative = path.relative_to(self.workspace).as_posix()
+            return [
+                "psql", f"service={self.config.postgres_service}", "--no-psqlrc",
+                "--set=ON_ERROR_STOP=1", "--single-transaction", "--file", relative,
+            ]
+
+        database = str(arguments["database"])
+        if database not in {"db2", "postgres"}:
+            raise ValueError("database must be 'db2' or 'postgres'")
+        if database == "postgres":
+            if not self.config.postgres_service:
+                raise RuntimeError("AGENT_ARMY_POSTGRES_SERVICE is not configured")
+            connection = f"service={self.config.postgres_service}"
+            if name == "database_schema":
+                return [
+                    "pg_dump", f"--dbname={connection}", "--schema-only",
+                    "--no-owner", "--no-privileges",
+                ]
+            sql = self._read_only_sql(str(arguments["sql"]))
+            return [
+                "psql", connection, "--no-psqlrc", "--set=ON_ERROR_STOP=1",
+                "--csv", "--command", f"BEGIN READ ONLY; {sql}; COMMIT;",
+            ]
+
+        if not self.config.db2_database:
+            raise RuntimeError("AGENT_ARMY_DB2_DATABASE is not configured")
+        if name == "database_schema":
+            return ["db2look", "-d", self.config.db2_database, "-e", "-x"]
+        sql = self._read_only_sql(str(arguments["sql"]))
+        return [
+            "db2", "-x", "-td;",
+            f"connect to {self.config.db2_database}; {sql}; connect reset;",
+        ]
+
     def _execute_tool(
         self, task: Task, name: str, arguments: Dict[str, Any],
     ) -> str:
@@ -125,12 +223,17 @@ class AnthropicRoleRunner(RoleRunner):
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(str(arguments["content"]), encoding="utf-8")
             return f"wrote {path.relative_to(self.workspace)}"
-        if name in {"sandbox_exec", "git"}:
+        if name in {
+            "sandbox_exec", "git", "database_query", "database_schema",
+            "database_migrate",
+        }:
             if self.executor_factory is None:
                 raise RuntimeError("no sandbox executor is configured")
             executor = self.executor_factory(task)
             if name == "git":
                 command = ["git", *[str(value) for value in arguments.get("args", [])]]
+            elif name.startswith("database_"):
+                command = self._database_command(name, arguments)
             else:
                 raw_command = arguments.get("command")
                 if not isinstance(raw_command, list) or not raw_command:
