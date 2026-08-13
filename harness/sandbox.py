@@ -11,9 +11,9 @@ backends are provided:
 """
 from __future__ import annotations
 
-import subprocess
 import re
 import shutil
+import subprocess
 import sys
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
@@ -131,6 +131,7 @@ class DockerSandboxExecutor(SandboxExecutor):
         self.name = f"agent-army-{safe_id or 'task'}"[:63].rstrip("-")
         self.template = template
         self.clone = clone
+        self._ready = False
 
     def validate(self) -> None:
         if shutil.which("sbx") is None:
@@ -168,14 +169,19 @@ class DockerSandboxExecutor(SandboxExecutor):
     def ensure(self, timeout: int = 120) -> ExecResult:
         """Reconnect to an existing task VM or create it if it is absent."""
         self.validate()
+        if self._ready:
+            return ExecResult(0, "", "")
         probe = self._invoke(["sbx", "exec", self.name, "true"], timeout)
         if probe.ok:
+            self._ready = True
             return probe
         command = ["sbx", "create", "--name", self.name]
         if self.clone:
             command.append("--clone")
         command += [self.template, str(self.workdir)]
-        return self._invoke(command, timeout)
+        created = self._invoke(command, timeout)
+        self._ready = created.ok
+        return created
 
     def run(self, command: List[str], cwd: Optional[str] = None, timeout: int = 600) -> ExecResult:
         ready = self.ensure(min(timeout, 120))
@@ -193,10 +199,16 @@ class DockerSandboxExecutor(SandboxExecutor):
         return self._invoke(["sbx", "exec", self.name, *sandbox_command], timeout)
 
     def stop(self, timeout: int = 60) -> ExecResult:
-        return self._invoke(["sbx", "stop", self.name], timeout)
+        result = self._invoke(["sbx", "stop", self.name], timeout)
+        if result.ok:
+            self._ready = False
+        return result
 
     def remove(self, timeout: int = 60) -> ExecResult:
-        return self._invoke(["sbx", "rm", "--force", self.name], timeout)
+        result = self._invoke(["sbx", "rm", "--force", self.name], timeout)
+        if result.ok:
+            self._ready = False
+        return result
 
 
 class E2BExecutor(SandboxExecutor):

@@ -188,6 +188,34 @@ class TestAnthropicRoleRunner(unittest.TestCase):
             self.assertEqual(
                 second_call["messages"][-1]["content"][0]["type"], "tool_result")
 
+    def test_persistent_sandbox_failure_blocks_without_retry(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config = Config()
+            config.anthropic_api_key = "test-key"
+            agents = load_all_agents(AGENTS_DIR)
+            runner = AnthropicRoleRunner(
+                agents["code"], AGENTS_DIR, config,
+                BudgetGuard(config, TaskLedger(Path(tmp) / "ledger")),
+                Path(tmp), lambda task: (_ for _ in ()).throw(
+                    RuntimeError("sbx unavailable")),
+            )
+            tool_use = mock.Mock(
+                type="tool_use", id="call-1", input={"command": ["true"]})
+            tool_use.name = "sandbox_exec"
+            response = mock.Mock(
+                content=[tool_use],
+                usage=mock.Mock(input_tokens=10, output_tokens=5),
+            )
+            client = mock.Mock()
+            client.messages.create.return_value = response
+            anthropic_mod = mock.Mock()
+            anthropic_mod.Anthropic.return_value = client
+            with mock.patch.dict(sys.modules, {"anthropic": anthropic_mod}):
+                result = runner.run(hello_task(), [])
+            self.assertEqual(result.status, STATUS_BLOCKED)
+            self.assertIn("sbx unavailable", result.summary)
+            client.messages.create.assert_called_once()
+
 
 class TestGitHubIssueIntake(unittest.TestCase):
     def _intake(self) -> GitHubIssueIntake:
@@ -292,6 +320,20 @@ class TestDockerSandboxExecutor(unittest.TestCase):
                 executor.ensure()
             run.assert_called_once()
             self.assertEqual(run.call_args.args[0], ["sbx", "exec", executor.name, "true"])
+
+    def test_run_skips_probe_after_executor_is_ready(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            executor = DockerSandboxExecutor(Path(tmp), "task")
+            executor._ready = True
+            with mock.patch("harness.sandbox.shutil.which", return_value="/bin/sbx"), \
+                    mock.patch("harness.sandbox.subprocess.run") as run:
+                run.return_value = mock.Mock(returncode=0, stdout="", stderr="")
+                result = executor.run(["true"])
+            self.assertTrue(result.ok)
+            run.assert_called_once_with(
+                ["sbx", "exec", executor.name, "true"],
+                capture_output=True, text=True, timeout=600,
+            )
 
     def test_rejects_escaping_working_directory(self):
         with tempfile.TemporaryDirectory() as tmp:

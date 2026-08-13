@@ -203,6 +203,8 @@ class AnthropicRoleRunner(RoleRunner):
                     try:
                         content = self._execute_tool(task, use.name, use.input)
                         is_error = False
+                    except RuntimeError:
+                        raise
                     except Exception as exc:  # tool errors are returned to the model
                         content = self._redact(f"{type(exc).__name__}: {exc}")
                         is_error = True
