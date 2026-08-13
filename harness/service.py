@@ -62,22 +62,27 @@ class Service:
                     self._executor_for,
                 )
         self.orchestrator = Orchestrator(runners, self.ledger, self.intake)
-        self.active_tasks: Dict[str, Task] = {}
+        self.active_tasks: Dict[str, Task] = {
+            task.task_id: task for task in self.ledger.pending_tasks()
+        }
 
     def _executor_for(self, task: Task) -> SandboxExecutor:
         existing = self._executors.get(task.task_id)
         if existing is not None:
             return existing
         if self.config.sandbox_backend == "docker-sandbox":
-            executor: SandboxExecutor = DockerSandboxExecutor(
+            docker_sandbox = DockerSandboxExecutor(
                 REPO_ROOT, task.task_id, self.config.sandbox_template,
                 self.config.sandbox_clone,
             )
-            ready = executor.ensure(self.config.sandbox_timeout)  # type: ignore[attr-defined]
+            ready = docker_sandbox.ensure(self.config.sandbox_timeout)
             if not ready.ok:
-                self.ledger.record_sandbox(task.task_id, executor.name, "failed")  # type: ignore[attr-defined]
+                self.ledger.record_sandbox(
+                    task.task_id, docker_sandbox.name, "failed")
                 raise RuntimeError(ready.stderr or ready.stdout)
-            self.ledger.record_sandbox(task.task_id, executor.name, "running")  # type: ignore[attr-defined]
+            self.ledger.record_sandbox(
+                task.task_id, docker_sandbox.name, "running")
+            executor: SandboxExecutor = docker_sandbox
         elif self.config.sandbox_backend == "docker":
             executor = DockerExecutor(REPO_ROOT, image=self.config.sandbox_image)
         else:
@@ -111,6 +116,7 @@ class Service:
         for task in self.intake.poll():
             if task.task_id not in self.active_tasks:
                 log.info("ingested task %s: %s", task.task_id, task.goal)
+                self.ledger.record_task(task)
                 self.active_tasks[task.task_id] = task
         for task in list(self.active_tasks.values()):
             self._sync_approvals(task)

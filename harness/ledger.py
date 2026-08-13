@@ -9,7 +9,7 @@ import json
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from .models import Result
+from .models import Result, Task
 
 
 class TaskLedger:
@@ -55,3 +55,24 @@ class TaskLedger:
         state = self.load(task_id)
         state["sandbox"] = {"name": name, "status": status}
         self.save(state)
+
+    def record_task(self, task: Task) -> None:
+        state = self.load(task.task_id)
+        state["task"] = task.to_dict()
+        self.save(state)
+
+    def pending_tasks(self) -> List[Task]:
+        tasks = []
+        for path in sorted(self.ledger_dir.glob("*.json")):
+            state = json.loads(path.read_text(encoding="utf-8"))
+            task_data = state.get("task")
+            if not task_data:
+                continue
+            task = Task.from_dict(task_data)
+            completed = {
+                result["role"] for result in state.get("results", [])
+                if result.get("status") == "succeeded"
+            }
+            if not set(task.roles) <= completed:
+                tasks.append(task)
+        return tasks

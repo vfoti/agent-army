@@ -4,9 +4,12 @@ and the always-on service loop."""
 from __future__ import annotations
 
 import json
+import os
+import shutil
 import sys
 import tempfile
 import unittest
+import uuid
 from pathlib import Path
 from unittest import mock
 
@@ -151,6 +154,40 @@ class TestAnthropicRoleRunner(unittest.TestCase):
             self.assertEqual(result.status, STATUS_BLOCKED)
             client.messages.create.assert_not_called()
 
+    def test_runs_bounded_role_scoped_tool_loop(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config = Config()
+            config.anthropic_api_key = "test-key"
+            ledger = TaskLedger(Path(tmp) / "ledger")
+            agents = load_all_agents(AGENTS_DIR)
+            executor = mock.Mock()
+            executor.run.return_value = mock.Mock(
+                exit_code=0, stdout="ok", stderr="")
+            runner = AnthropicRoleRunner(
+                agents["code"], AGENTS_DIR, config, BudgetGuard(config, ledger),
+                Path(tmp), lambda task: executor,
+            )
+            tool_use = mock.Mock(
+                type="tool_use", id="call-1", input={"command": ["true"]})
+            tool_use.name = "sandbox_exec"
+            first = mock.Mock(
+                content=[tool_use],
+                usage=mock.Mock(input_tokens=10, output_tokens=5),
+            )
+            second = _FakeResponse(
+                '{"status": "succeeded", "summary": "tool complete"}')
+            client = mock.Mock()
+            client.messages.create.side_effect = [first, second]
+            anthropic_mod = mock.Mock()
+            anthropic_mod.Anthropic.return_value = client
+            with mock.patch.dict(sys.modules, {"anthropic": anthropic_mod}):
+                result = runner.run(hello_task(), [])
+            self.assertEqual(result.status, STATUS_SUCCEEDED)
+            executor.run.assert_called_once()
+            second_call = client.messages.create.call_args_list[1].kwargs
+            self.assertEqual(
+                second_call["messages"][-1]["content"][0]["type"], "tool_result")
+
 
 class TestGitHubIssueIntake(unittest.TestCase):
     def _intake(self) -> GitHubIssueIntake:
@@ -270,6 +307,42 @@ class TestDockerSandboxExecutor(unittest.TestCase):
                 with self.assertRaisesRegex(RuntimeError, "not installed"):
                     executor.ensure()
 
+    @unittest.skipUnless(
+        os.environ.get("AGENT_ARMY_RUN_SBX_INTEGRATION") == "1"
+        and shutil.which("sbx"),
+        "set AGENT_ARMY_RUN_SBX_INTEGRATION=1 with sbx installed",
+    )
+    def test_live_shell_sandbox(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            executor = DockerSandboxExecutor(
+                Path(tmp), f"integration-{uuid.uuid4().hex[:10]}")
+            try:
+                self.assertTrue(executor.ensure(timeout=180).ok)
+                result = executor.run(
+                    ["sh", "-c", "printf sandbox-ok"], timeout=30)
+                self.assertTrue(result.ok, result.stderr)
+                self.assertEqual(result.stdout, "sandbox-ok")
+            finally:
+                executor.remove(timeout=60)
+
+
+class TestSandboxConfig(unittest.TestCase):
+    def test_docker_sandbox_environment(self):
+        environment = {
+            "AGENT_ARMY_SANDBOX_BACKEND": "docker-sandbox",
+            "AGENT_ARMY_SANDBOX_TEMPLATE": "custom-shell",
+            "AGENT_ARMY_SANDBOX_CLONE": "true",
+            "AGENT_ARMY_SANDBOX_RETAIN": "1",
+            "AGENT_ARMY_SANDBOX_TIMEOUT": "42",
+        }
+        with mock.patch.dict(os.environ, environment, clear=False):
+            config = Config()
+        self.assertEqual(config.sandbox_backend, "docker-sandbox")
+        self.assertEqual(config.sandbox_template, "custom-shell")
+        self.assertTrue(config.sandbox_clone)
+        self.assertTrue(config.sandbox_retain)
+        self.assertEqual(config.sandbox_timeout, 42)
+
 
 class TestSandboxToolExecution(unittest.TestCase):
     def test_role_cannot_invoke_undeclared_tool(self):
@@ -331,6 +404,22 @@ class TestServiceLoop(unittest.TestCase):
                          if r["status"] == "succeeded"}
             self.assertEqual(completed, {"analysis", "design", "code", "test"})
             self.assertNotIn("hello-world-001", service.active_tasks)
+
+    def test_restores_incomplete_tasks_from_ledger(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            inbox = tmp_path / "inbox"
+            inbox.mkdir()
+            config = Config()
+            config.data_dir = tmp_path
+            intake = FolderIntake(inbox, tmp_path / "outbox")
+            ledger = TaskLedger(tmp_path / "ledger")
+            ledger.record_task(hello_task())
+            ledger.record_result(Result(
+                task_id="hello-world-001", role="analysis",
+                status=STATUS_SUCCEEDED))
+            restarted = Service(config, intake, dry_run=True)
+            self.assertIn("hello-world-001", restarted.active_tasks)
 
 
 if __name__ == "__main__":
