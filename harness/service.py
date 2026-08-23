@@ -21,6 +21,7 @@ from .agent_loader import load_all_agents
 from .anthropic_runner import AnthropicRoleRunner
 from .budget import BudgetGuard
 from .config import Config
+from .deepagents_runner import DeepAgentsRoleRunner
 from .intake import FolderIntake, GitHubIssueIntake, IntakeAdapter
 from .ledger import TaskLedger
 from .models import Task
@@ -34,6 +35,12 @@ log = logging.getLogger("agent-army")
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 AGENTS_DIR = REPO_ROOT / "agents"
+
+# Selectable role execution backends (AGENT_ARMY_ROLE_RUNNER).
+ROLE_RUNNERS = {
+    "anthropic": AnthropicRoleRunner,
+    "deepagents": DeepAgentsRoleRunner,
+}
 
 
 class Service:
@@ -52,12 +59,15 @@ class Service:
                 config.sandbox_clone,
             ).validate_host()
         agents = load_all_agents(AGENTS_DIR)
+        if config.role_runner not in ROLE_RUNNERS:
+            raise ValueError(f"unknown role runner: {config.role_runner}")
+        runner_class = ROLE_RUNNERS[config.role_runner]
         runners: Dict[str, RoleRunner] = {}
         for role, agent in agents.items():
             if dry_run:
                 runners[role] = NullRoleRunner(agent, AGENTS_DIR)
             else:
-                runners[role] = AnthropicRoleRunner(
+                runners[role] = runner_class(
                     agent, AGENTS_DIR, config, self.budget, REPO_ROOT,
                     self._executor_for,
                 )

@@ -41,6 +41,12 @@ AGENT_ARMY_BUDGET_USD_PER_ROLE=2.0
 AGENT_ARMY_BUDGET_TOKENS_PER_TASK=500000
 AGENT_ARMY_POLL_INTERVAL=60
 
+# Role execution backend: "anthropic" (default) or "deepagents".
+# "deepagents" needs `pip install deepagents langchain-anthropic` and adds
+# planning plus executable sub-agent delegation. See docs/harness.md.
+AGENT_ARMY_ROLE_RUNNER=anthropic
+AGENT_ARMY_DEEPAGENTS_RECURSION_LIMIT=50
+
 # 2. Create the intake label on the repo (once)
 gh label create agent-task --repo "$AGENT_ARMY_REPO"
 
@@ -50,7 +56,8 @@ docker compose logs -f
 ```
 
 Without Docker (bare local run): `python3 -m harness.service`
-(needs `pip install anthropic`). For offline testing:
+(needs `pip install anthropic`, plus `pip install deepagents langchain-anthropic`
+if `AGENT_ARMY_ROLE_RUNNER=deepagents`). For offline testing:
 `python3 -m harness.service --folder --dry-run --once`.
 
 ## Docker Sandboxes microVM backend

@@ -19,6 +19,8 @@ All roles must apply the shared instructions to keep context windows focused and
 
 Sub-agents are intentionally narrow in scope. Role agents should delegate to these frequently to avoid oversized context and to parallelize work where possible.
 
+Under the default Anthropic runner these are prompt-level guidance. Under the opt-in deepagents runner (`AGENT_ARMY_ROLE_RUNNER=deepagents`) the harness loads each file and registers it as a real delegation target with its own isolated context window, named by its file stem (for example `legacy-inventory`). Sub-agents inherit exactly the tools their role declares — delegating never widens a role's permissions.
+
 - `analysis/subagents/legacy-inventory.subagent.md`
 - `analysis/subagents/behavior-extraction.subagent.md`
 - `design/subagents/api-contracts.subagent.md`

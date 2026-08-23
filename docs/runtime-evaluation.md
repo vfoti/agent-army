@@ -29,7 +29,9 @@ tasks must not modify the same host working tree.
 
 ## LangChain (LangGraph + deepagents)
 
-Not a sandbox — the orchestration/harness layer.
+Not a sandbox — the orchestration/harness layer. The package evaluated here is
+the **Python** [`deepagents`](https://github.com/langchain-ai/deepagents)
+package (`pip install deepagents`).
 
 **Pros**
 - LangGraph gives durable, stateful multi-agent graphs matching the analysis → design → code ⇄ test pipeline, with human-in-the-loop interrupts at the governance gates.
@@ -39,8 +41,21 @@ Not a sandbox — the orchestration/harness layer.
 **Cons**
 - Code execution still needs a backend — pair with e2b or Docker.
 - Adds a framework dependency and a Python service to maintain.
+- Its security model is explicitly "trust the LLM": boundaries must be enforced at the tool/sandbox level, so the harness guards have to be ported onto its tools rather than inherited from its defaults.
 
-**Harness fit:** plug a deep agent into `PromptRoleRunner.invoke`; optionally replace `Orchestrator` with a LangGraph graph, keeping the Task/Result contracts.
+**Harness fit:** implemented as `DeepAgentsRoleRunner` (`harness/deepagents_runner.py`), an opt-in peer of the Anthropic runner selected with `AGENT_ARMY_ROLE_RUNNER=deepagents`. See [harness.md](harness.md#langchain--deepagents-integration).
+
+### Rejected: `deepagentsjs`
+
+[`langchain-ai/deepagentsjs`](https://github.com/langchain-ai/deepagentsjs) is
+the TypeScript/JavaScript sibling of the same library. It was evaluated and
+**rejected on language-mismatch grounds**: the harness, CLI, service loop,
+tests, and container image are all Python, so adopting it would mean either
+rewriting the harness in TypeScript or running a second Node runtime plus an
+IPC bridge purely to reach a feature set the Python package already provides.
+Node/TypeScript is therefore out of scope for this repository. Use the Python
+`deepagents` package instead; do not re-litigate this without a concrete reason
+the Python package cannot serve.
 
 ## GitHub sandboxes (Copilot coding agent / Actions runners)
 
@@ -56,8 +71,9 @@ Not a sandbox — the orchestration/harness layer.
 
 ## Recommendation
 
-- **The existing harness** for orchestration and governance.
+- **The existing harness** for orchestration and governance — intake, gates, ledger, budgets, and the Task/Result contracts stay outside any agent framework.
 - **Docker Sandboxes** for local, VM-isolated code and test execution.
+- **Python `deepagents`** as an optional *inner* agent loop per role (planning + executable sub-agent delegation), behind `AGENT_ARMY_ROLE_RUNNER`. Not `deepagentsjs`, and not as a replacement for the orchestrator.
 - **e2b** when a hosted sandbox is preferable.
 - **GitHub-native mode** (Copilot coding agent) as a lightweight deployment target reusing the same role prompts.
 
