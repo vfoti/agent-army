@@ -5,10 +5,10 @@ An **analysis / design / code / test agent army** that takes instructions as inp
 The repository contains:
 
 - **`agents/`** — structured agent definitions (YAML frontmatter + role prompt) for the four roles, loadable by the harness or deployable directly as Copilot custom agents.
-- **`harness/`** — a stdlib-only Python harness: instruction intake, orchestrator with governance gates, role runners, pluggable sandbox layer, env-var configuration (`config.py`), token/cost ceilings (`budget.py`), an always-on service loop (`service.py`), and a per-task ledger. The only optional third-party dependency is the `anthropic` SDK, used solely by `harness/anthropic_runner.py`.
+- **`harness/`** — a stdlib-only Python harness: instruction intake, orchestrator with governance gates, role runners, guarded role-scoped tools (`tools.py`), pluggable sandbox layer, env-var configuration (`config.py`), token/cost ceilings (`budget.py`), an always-on service loop (`service.py`), and a per-task ledger. Third-party dependencies are optional and lazily imported: the `anthropic` SDK for `harness/anthropic_runner.py`, and `deepagents` + `langchain-anthropic` for the opt-in `harness/deepagents_runner.py`.
 - **`tasks/`** — task envelopes (intake contract) and runtime state.
 - **`docs/`** — harness design, deployment, and the e2b.dev vs LangChain vs GitHub sandbox runtime evaluation.
-- **`tests/`** — harness test suite (`tests/test_harness.py`, `tests/test_phase2.py`).
+- **`tests/`** — harness test suite (`tests/test_harness.py`, `tests/test_phase2.py`, `tests/test_deepagents_runner.py`).
 - **`Dockerfile` / `docker-compose.yml`** — the always-on containerized deployment of the harness service.
 
 ## The four roles
@@ -43,7 +43,7 @@ python3 -m harness approve modernize-billing-001 analysis <your-name>
 python3 -m harness run tasks/examples/modernize-billing-001.json
 
 # run the tests
-python3 -m unittest tests.test_harness tests.test_phase2
+python3 -m unittest tests.test_harness tests.test_phase2 tests.test_deepagents_runner
 
 # run the always-on service loop (folder intake, offline, single cycle)
 python3 -m harness.service --folder --dry-run --once
@@ -61,7 +61,9 @@ See [docs/deployment.md](docs/deployment.md) for the always-on Docker Compose de
 
 ## Harness design
 
-See [docs/harness.md](docs/harness.md) for the full design: intake layer, orchestrator with governance gates, role runners (pluggable `invoke` backend for LangChain deepagents, Copilot, or direct model APIs), sandbox layer, task ledger, and the traceability index.
+See [docs/harness.md](docs/harness.md) for the full design: intake layer, orchestrator with governance gates, role runners, guarded role-scoped tools, sandbox layer, task ledger, and the traceability index.
+
+Roles run through the Anthropic runner by default. Setting `AGENT_ARMY_ROLE_RUNNER=deepagents` (with `pip install deepagents langchain-anthropic`) runs each role inside LangChain's **Python** [`deepagents`](https://github.com/langchain-ai/deepagents) harness instead, which adds planning and turns the `agents/<role>/subagents/*.subagent.md` definitions into executable delegation. deepagents owns only the inner agent loop — intake, gates, the ledger, the Task/Result contracts, and the security guards stay in the harness. The JavaScript sibling `deepagentsjs` was evaluated and rejected on language-mismatch grounds; see [docs/runtime-evaluation.md](docs/runtime-evaluation.md#rejected-deepagentsjs).
 
 ## Governance rules
 
