@@ -35,6 +35,17 @@ class Config:
     max_output_tokens: int = field(
         default_factory=lambda: _env_int("AGENT_ARMY_MAX_OUTPUT_TOKENS", 4096))
 
+    # Role execution backend. "anthropic" is the default hand-rolled tool loop;
+    # "deepagents" opts in to LangChain's Python deepagents harness, which adds
+    # planning and executable sub-agent delegation but pulls in the LangChain
+    # dependency tree. See docs/harness.md.
+    role_runner: str = field(
+        default_factory=lambda: os.environ.get("AGENT_ARMY_ROLE_RUNNER", "anthropic"))
+    # Upper bound on deepagents' internal graph steps for a single role, so a
+    # looping agent fails fast instead of burning the whole task budget.
+    deepagents_recursion_limit: int = field(
+        default_factory=lambda: _env_int("AGENT_ARMY_DEEPAGENTS_RECURSION_LIMIT", 50))
+
     # D3: GitHub issue intake
     github_token: str = field(
         default_factory=lambda: os.environ.get("GITHUB_TOKEN", ""))

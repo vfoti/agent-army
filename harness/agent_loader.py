@@ -124,3 +124,58 @@ def build_system_prompt(agent: AgentDefinition, agents_dir: Path) -> str:
             parts.append(shared.read_text(encoding="utf-8").strip())
     parts.append(agent.prompt)
     return "\n\n".join(parts)
+
+
+def _subagent_name(path: Path, text: str) -> str:
+    """Slug name for delegation (the file stem, e.g. `legacy-inventory`)."""
+    return path.name[:-len(".subagent.md")] if path.name.endswith(".subagent.md") \
+        else path.stem
+
+
+def _subagent_title(path: Path, text: str) -> str:
+    for line in text.splitlines():
+        if line.startswith("# Sub-agent:"):
+            return line.split(":", 1)[1].strip()
+    return _subagent_name(path, text)
+
+
+def _subagent_description(text: str) -> str:
+    """First non-empty line of the `## Scope` section, if present."""
+    lines = text.splitlines()
+    for index, line in enumerate(lines):
+        if line.strip().lower().startswith("## scope"):
+            for candidate in lines[index + 1:]:
+                if candidate.strip():
+                    return candidate.strip()
+    return ""
+
+
+def load_subagents(agent: AgentDefinition, agents_dir: Path) -> List[Dict[str, str]]:
+    """Load the narrow sub-agent definitions declared by a role agent.
+
+    Returns one dict per sub-agent with `name` (delegation slug), `title`,
+    `description`, and `prompt`, which the deepagents runner maps onto
+    delegation targets. Sub-agent paths are confined to the role's own
+    directory so a definition cannot pull in files from elsewhere on disk.
+    """
+    role_dir = (agents_dir / agent.role).resolve()
+    subagents: List[Dict[str, str]] = []
+    for reference in agent.subagents:
+        path = (role_dir / str(reference)).resolve()
+        try:
+            path.relative_to(role_dir)
+        except ValueError as exc:
+            raise ValueError(
+                f"sub-agent {reference!r} escapes the {agent.role} agent directory"
+            ) from exc
+        if not path.is_file():
+            continue
+        text = path.read_text(encoding="utf-8")
+        title = _subagent_title(path, text)
+        subagents.append({
+            "name": _subagent_name(path, text),
+            "title": title,
+            "description": _subagent_description(text) or title,
+            "prompt": text.strip(),
+        })
+    return subagents
